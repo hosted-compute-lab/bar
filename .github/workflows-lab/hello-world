@@ -1,0 +1,13 @@
+name: Hello World Matrix
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  hello-world:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+    - name: Run Hello World
+      run: echo "Hello World from ${{ matrix.os }}"
