@@ -16,5 +16,5 @@ jobs:
         run: lscpu
 
       - name: write to /mnt
-        run: echo "hello world" > /mnt/tmp.txt
+        run: sudo echo "hello world" > /mnt/tmp.txt
           
