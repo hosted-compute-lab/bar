@@ -14,5 +14,7 @@ jobs:
 
       - name: Run lscpu command
         run: lscpu
-          
+
+      - name: write to /mnt
+        run: echo "hello world" > /mnt/tmp.txt
           
