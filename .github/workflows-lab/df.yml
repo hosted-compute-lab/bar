@@ -13,8 +13,4 @@ jobs:
         run: lsblk
 
       - name: Run lscpu command
-        run: lscpu
-
-      - name: write to /mnt
-        run: sudo echo "hello world" > /mnt/tmp.txt
-          
+        run: lscpu          
