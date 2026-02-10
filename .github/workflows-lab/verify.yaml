@@ -1,0 +1,175 @@
+name: Verify GitHub-Hosted Runners
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Verify ${{ matrix.label }}
+    runs-on: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Linux x64 ──────────────────────────────────────────────
+          - label: ubuntu-slim
+            os: linux
+            expected_user: runner
+            expected_workdir: /home/runner/work
+          - label: ubuntu-latest
+            os: linux
+            expected_user: runner
+            expected_workdir: /home/runner/work
+          - label: ubuntu-24.04
+            os: linux
+            expected_user: runner
+            expected_workdir: /home/runner/work
+          - label: ubuntu-22.04
+            os: linux
+            expected_user: runner
+            expected_workdir: /home/runner/work
+
+          # ── Linux arm64 ────────────────────────────────────────────
+          - label: ubuntu-24.04-arm
+            os: linux
+            expected_user: runner
+            expected_workdir: /home/runner/work
+          - label: ubuntu-22.04-arm
+            os: linux
+            expected_user: runner
+            expected_workdir: /home/runner/work
+
+          # ── Windows x64 ────────────────────────────────────────────
+          - label: windows-latest
+            os: windows
+            expected_user: runneradmin
+            expected_workdir: D:\a
+          - label: windows-2025
+            os: windows
+            expected_user: runneradmin
+            expected_workdir: D:\a
+          - label: windows-2025-vs2026
+            os: windows
+            expected_user: runneradmin
+            expected_workdir: D:\a
+          - label: windows-2022
+            os: windows
+            expected_user: runneradmin
+            expected_workdir: D:\a
+
+          # ── Windows arm64 ──────────────────────────────────────────
+          - label: windows-11-arm
+            os: windows
+            expected_user: runneradmin
+            expected_workdir: C:\a
+
+          # ── macOS Intel ────────────────────────────────────────────
+          - label: macos-15-intel
+            os: macos
+            expected_user: runner
+            expected_workdir: /Users/runner/work
+
+          # ── macOS arm64 (Apple Silicon) ────────────────────────────
+          - label: macos-latest
+            os: macos
+            expected_user: runner
+            expected_workdir: /Users/runner/work
+          - label: macos-14
+            os: macos
+            expected_user: runner
+            expected_workdir: /Users/runner/work
+          - label: macos-15
+            os: macos
+            expected_user: runner
+            expected_workdir: /Users/runner/work
+          - label: macos-26
+            os: macos
+            expected_user: runner
+            expected_workdir: /Users/runner/work
+
+    steps:
+      # ── Linux / macOS verification ──────────────────────────────────
+      - name: Verify username (Linux/macOS)
+        if: matrix.os == 'linux' || matrix.os == 'macos'
+        run: |
+          actual_user="$(whoami)"
+          echo "Actual user:   $actual_user"
+          echo "Expected user: ${{ matrix.expected_user }}"
+          if [ "$actual_user" != "${{ matrix.expected_user }}" ]; then
+            echo "::error::Username mismatch – expected '${{ matrix.expected_user }}', got '$actual_user'"
+            exit 1
+          fi
+
+      - name: Verify working directory (Linux/macOS)
+        if: matrix.os == 'linux' || matrix.os == 'macos'
+        run: |
+          actual_dir="$(pwd)"
+          echo "Actual working directory:   $actual_dir"
+          echo "Expected working directory: ${{ matrix.expected_workdir }}"
+          if [[ "$actual_dir" != "${{ matrix.expected_workdir }}"* ]]; then
+            echo "::error::Working directory mismatch – expected prefix '${{ matrix.expected_workdir }}', got '$actual_dir'"
+            exit 1
+          fi
+
+      - name: Verify total disk space (Linux/macOS)
+        if: matrix.os == 'linux' || matrix.os == 'macos'
+        run: |
+          echo "=== Disk space ==="
+          df -h /
+          total_kb=$(df -k / | awk 'NR==2 {print $2}')
+          total_gb=$(awk "BEGIN {printf \"%.1f\", $total_kb / 1024 / 1024}")
+          echo "Total disk space: ${total_gb} GB"
+
+      # ── Windows verification ────────────────────────────────────────
+      - name: Verify username (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $actualUser = $env:USERNAME
+          $expectedUser = "${{ matrix.expected_user }}"
+          Write-Host "Actual user:   $actualUser"
+          Write-Host "Expected user: $expectedUser"
+          if ($actualUser -ne $expectedUser) {
+            Write-Error "Username mismatch – expected '$expectedUser', got '$actualUser'"
+            exit 1
+          }
+
+      - name: Verify working directory (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $actualDir = (Get-Location).Path
+          $expectedDir = "${{ matrix.expected_workdir }}"
+          Write-Host "Actual working directory:   $actualDir"
+          Write-Host "Expected working directory: $expectedDir"
+          if (-not $actualDir.StartsWith($expectedDir)) {
+            Write-Error "Working directory mismatch – expected prefix '$expectedDir', got '$actualDir'"
+            exit 1
+          }
+
+      - name: Verify total disk space (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          Write-Host "=== Disk space ==="
+          $drives = Get-PSDrive -PSProvider FileSystem
+          foreach ($drive in $drives) {
+            $totalGB = [math]::Round(($drive.Used + $drive.Free) / 1GB, 1)
+            $freeGB  = [math]::Round($drive.Free / 1GB, 1)
+            Write-Host "$($drive.Root): Total = ${totalGB} GB, Free = ${freeGB} GB"
+          }
+
+      # ── Report failure to Datadog ───────────────────────────────────
+      - name: Send failure metric to Datadog
+        if: failure()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "count"
+              name: "github.actions.runner_verification.failure"
+              value: 1.0
+              host: ${{ github.repository_owner }}
+              tags:
+                - "label:${{ matrix.label }}"
+                - "visibility:public"
