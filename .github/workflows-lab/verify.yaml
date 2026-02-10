@@ -159,17 +159,17 @@ jobs:
             Write-Host "$($drive.Root): Total = ${totalGB} GB, Free = ${freeGB} GB"
           }
 
-      # ── Report failure to Datadog ───────────────────────────────────
-      - name: Send failure metric to Datadog
-        if: failure()
+      # ── Report result to Datadog ─────────────────────────────────────
+      - name: Send result metric to Datadog
+        if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
         with:
           api-key: ${{ secrets.DATADOG_API_KEY }}
           metrics: |
             - type: "count"
-              name: "github.actions.runner_verification.failure"
+              name: "github.actions.runner_verification.result"
               value: 1.0
-              host: ${{ github.repository_owner }}
               tags:
                 - "label:${{ matrix.label }}"
                 - "visibility:public"
+                - "result:${{ job.status == 'success' && 'success' || 'failure' }}"
