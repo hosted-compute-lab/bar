@@ -167,7 +167,7 @@ jobs:
           api-key: ${{ secrets.DATADOG_API_KEY }}
           metrics: |
             - type: "count"
-              name: "github.actions.runner_verification.result"
+              name: "hosted_compute.runner_verification.result"
               value: 1.0
               tags:
                 - "label:${{ matrix.label }}"
