@@ -7,7 +7,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
+        a: [1,2,3,4,5]
+        b: [a, b]
     steps:
     - name: Run Hello World
       run: echo "Hello World from ${{ matrix.os }}"
