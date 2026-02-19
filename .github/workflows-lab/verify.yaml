@@ -58,10 +58,10 @@ jobs:
             os: windows
             expected_user: runneradmin
             expected_workdir: D:\a
-          # - label: windows-2025-ephemeral
-          #   os: windows
-          #   expected_user: runneradmin
-          #   expected_workdir: C:\a
+          - label: windows-2025-ephemeral
+            os: windows
+            expected_user: runneradmin
+            expected_workdir: C:\a
 
           # ── Windows arm64 ──────────────────────────────────────────
           - label: windows-11-arm
