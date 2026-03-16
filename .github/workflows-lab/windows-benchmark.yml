@@ -1,0 +1,271 @@
+name: Windows Performance Benchmark
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-windows-latest:
+    strategy:
+      matrix:
+        os: [windows-2025-vs2026-ephemeral, windows-2025-ephemeral]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: System Information
+        shell: powershell
+        run: |
+          Write-Host "=== System Information ===" -ForegroundColor Green
+          Get-ComputerInfo | Select-Object CsName, WindowsVersion, OsArchitecture, CsProcessors, CsTotalPhysicalMemory
+          
+          Write-Host "`n=== CPU Information ===" -ForegroundColor Green
+          Get-WmiObject Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed
+          
+          Write-Host "`n=== Memory Information ===" -ForegroundColor Green
+          $memory = Get-WmiObject Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum
+          Write-Host "Total RAM: $([math]::Round($memory.Sum / 1GB, 2)) GB"
+
+      - name: Detect Drives and Filesystems
+        shell: powershell
+        run: |
+          Write-Host "=== All Drives and Filesystems ===" -ForegroundColor Green
+          
+          # Get all drives with detailed information
+          Get-PSDrive -PSProvider FileSystem | ForEach-Object {
+              Write-Host "`n--- Drive $($_.Name): ---" -ForegroundColor Yellow
+              
+              # Get volume information
+              $volume = Get-Volume -DriveLetter $_.Name -ErrorAction SilentlyContinue
+              if ($volume) {
+                  Write-Host "Drive Letter    : $($_.Name):"
+                  Write-Host "FileSystem      : $($volume.FileSystemType)"
+                  Write-Host "Label           : $($volume.FileSystemLabel)"
+                  Write-Host "Size            : $([math]::Round($volume.Size / 1GB, 2)) GB"
+                  Write-Host "Free Space      : $([math]::Round($volume.SizeRemaining / 1GB, 2)) GB"
+                  Write-Host "Used Space      : $([math]::Round(($volume.Size - $volume.SizeRemaining) / 1GB, 2)) GB"
+                  Write-Host "Health Status   : $($volume.HealthStatus)"
+                  Write-Host "Drive Type      : $($volume.DriveType)"
+                  Write-Host "Allocation Unit : $($volume.AllocationUnitSize) bytes"
+              }
+              
+              # Get disk information
+              $partition = Get-Partition -DriveLetter $_.Name -ErrorAction SilentlyContinue
+              if ($partition) {
+                  $disk = Get-Disk -Number $partition.DiskNumber -ErrorAction SilentlyContinue
+                  if ($disk) {
+                      Write-Host "`nPhysical Disk Information:"
+                      Write-Host "Disk Number     : $($disk.Number)"
+                      Write-Host "Model           : $($disk.FriendlyName)"
+                      Write-Host "Media Type      : $($disk.MediaType)"
+                      Write-Host "Bus Type        : $($disk.BusType)"
+                      Write-Host "Partition Style : $($disk.PartitionStyle)"
+                      Write-Host "Total Size      : $([math]::Round($disk.Size / 1GB, 2)) GB"
+                  }
+              }
+          }
+          
+          Write-Host "`n=== Detailed Disk Information ===" -ForegroundColor Green
+          Get-PhysicalDisk | Select-Object DeviceId, FriendlyName, MediaType, BusType, Size, HealthStatus, OperationalStatus | Format-Table -AutoSize
+
+      - name: Install DiskSpd (Microsoft Disk Benchmark Tool)
+        shell: powershell
+        run: |
+          Write-Host "Downloading DiskSpd..." -ForegroundColor Green
+          $url = "https://github.com/microsoft/diskspd/releases/latest/download/DiskSpd.zip"
+          $output = "$env:TEMP\DiskSpd.zip"
+          Invoke-WebRequest -Uri $url -OutFile $output
+          
+          Write-Host "Extracting DiskSpd..." -ForegroundColor Green
+          Expand-Archive -Path $output -DestinationPath "$env:TEMP\DiskSpd" -Force
+          
+          # Find the executable
+          $diskspd = Get-ChildItem -Path "$env:TEMP\DiskSpd" -Recurse -Filter "diskspd.exe" | Select-Object -First 1
+          Write-Host "DiskSpd location: $($diskspd.FullName)"
+          
+          # Save path to environment file for subsequent steps
+          echo "DISKSPD_PATH=$($diskspd.FullName)" >> $env:GITHUB_ENV
+          
+          # Verify installation by checking if file exists
+          if (Test-Path $diskspd.FullName) {
+              Write-Host "DiskSpd installed successfully!" -ForegroundColor Green
+          } else {
+              Write-Host "DiskSpd installation failed!" -ForegroundColor Red
+              exit 1
+          }
+
+      - name: CPU Benchmark - Single Thread
+        shell: powershell
+        run: |
+          Write-Host "=== CPU Benchmark - Single Thread ===" -ForegroundColor Green
+          
+          $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+          $iterations = 0
+          
+          # Run prime number calculation for 30 seconds
+          $endTime = (Get-Date).AddSeconds(30)
+          while ((Get-Date) -lt $endTime) {
+              # Calculate primes up to 10000
+              $primes = 2..10000 | Where-Object {
+                  $num = $_
+                  $isPrime = $true
+                  for ($i = 2; $i -le [math]::Sqrt($num); $i++) {
+                      if ($num % $i -eq 0) {
+                          $isPrime = $false
+                          break
+                      }
+                  }
+                  $isPrime
+              }
+              $iterations++
+          }
+          
+          $stopwatch.Stop()
+          $opsPerSec = [math]::Round($iterations / $stopwatch.Elapsed.TotalSeconds, 2)
+          
+          Write-Host "Total iterations: $iterations"
+          Write-Host "Time elapsed: $($stopwatch.Elapsed.TotalSeconds) seconds"
+          Write-Host "Operations per second: $opsPerSec"
+
+      - name: CPU Benchmark - Multi Thread
+        shell: powershell
+        run: |
+          Write-Host "=== CPU Benchmark - Multi Thread ===" -ForegroundColor Green
+          
+          $jobs = @()
+          $threadCount = [Environment]::ProcessorCount
+          Write-Host "Running on $threadCount threads"
+          
+          # Start background jobs
+          for ($i = 0; $i -lt $threadCount; $i++) {
+              $jobs += Start-Job -ScriptBlock {
+                  $iterations = 0
+                  $endTime = (Get-Date).AddSeconds(30)
+                  
+                  while ((Get-Date) -lt $endTime) {
+                      # Calculate primes up to 10000
+                      $primes = 2..10000 | Where-Object {
+                          $num = $_
+                          $isPrime = $true
+                          for ($i = 2; $i -le [math]::Sqrt($num); $i++) {
+                              if ($num % $i -eq 0) {
+                                  $isPrime = $false
+                                  break
+                              }
+                          }
+                          $isPrime
+                      }
+                      $iterations++
+                  }
+                  
+                  return $iterations
+              }
+          }
+          
+          # Wait for all jobs and collect results
+          $results = $jobs | Wait-Job | Receive-Job
+          $totalIterations = ($results | Measure-Object -Sum).Sum
+          $avgPerThread = [math]::Round($totalIterations / $threadCount, 2)
+          $totalOpsPerSec = [math]::Round($totalIterations / 30, 2)
+          
+          Write-Host "Total iterations: $totalIterations"
+          Write-Host "Average per thread: $avgPerThread"
+          Write-Host "Total operations per second: $totalOpsPerSec"
+          
+          # Cleanup
+          $jobs | Remove-Job
+
+      - name: Memory Benchmark
+        shell: powershell
+        run: |
+          Write-Host "=== Memory Benchmark ===" -ForegroundColor Green
+          
+          # Memory write test
+          $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+          $arraySize = 100MB / 8  # 100MB of doubles (8 bytes each)
+          $array = New-Object double[] $arraySize
+          
+          # Fill array
+          for ($i = 0; $i -lt $arraySize; $i++) {
+              $array[$i] = $i
+          }
+          
+          $stopwatch.Stop()
+          $mbPerSec = [math]::Round(100 / $stopwatch.Elapsed.TotalSeconds, 2)
+          
+          Write-Host "Memory write speed: $mbPerSec MB/sec"
+          Write-Host "Time elapsed: $($stopwatch.Elapsed.TotalSeconds) seconds"
+          
+          # Memory read test
+          $stopwatch.Restart()
+          $sum = 0
+          for ($i = 0; $i -lt $arraySize; $i++) {
+              $sum += $array[$i]
+          }
+          $stopwatch.Stop()
+          $mbPerSecRead = [math]::Round(100 / $stopwatch.Elapsed.TotalSeconds, 2)
+          
+          Write-Host "Memory read speed: $mbPerSecRead MB/sec"
+          Write-Host "Time elapsed: $($stopwatch.Elapsed.TotalSeconds) seconds"
+
+      - name: Disk Benchmark - C Drive (Sequential)
+        shell: powershell
+        run: |
+          Write-Host "=== Disk Benchmark - C: Drive (Sequential) ===" -ForegroundColor Green
+          
+          $testFile = "C:\testfile.dat"
+          
+          # Sequential write test
+          Write-Host "`n--- Sequential Write Test ---" -ForegroundColor Yellow
+          & $env:DISKSPD_PATH -c1G -w100 -b64K -d30 -Sh -W5 -o4 -t1 $testFile
+          
+          # Sequential read test
+          Write-Host "`n--- Sequential Read Test ---" -ForegroundColor Yellow
+          & $env:DISKSPD_PATH -c1G -w0 -b64K -d30 -Sh -W5 -o4 -t1 $testFile
+          
+          # Cleanup
+          Remove-Item $testFile -ErrorAction SilentlyContinue
+
+      - name: Disk Benchmark - C Drive (Random)
+        shell: powershell
+        run: |
+          Write-Host "=== Disk Benchmark - C: Drive (Random) ===" -ForegroundColor Green
+          
+          $testFile = "C:\testfile_random.dat"
+          
+          # Random read/write test (70% read, 30% write)
+          Write-Host "`n--- Random Read/Write Test (4K blocks) ---" -ForegroundColor Yellow
+          & $env:DISKSPD_PATH -c1G -w30 -b4K -r -d30 -Sh -W5 -o32 -t4 $testFile
+          
+          # Cleanup
+          Remove-Item $testFile -ErrorAction SilentlyContinue
+
+      - name: Disk Benchmark - D Drive (if exists)
+        shell: powershell
+        run: |
+          if (Test-Path "D:\") {
+              Write-Host "=== Disk Benchmark - D: Drive ===" -ForegroundColor Green
+              
+              $testFile = "D:\testfile.dat"
+              
+              # Sequential write test
+              Write-Host "`n--- Sequential Write Test ---" -ForegroundColor Yellow
+              & $env:DISKSPD_PATH -c1G -w100 -b64K -d30 -Sh -W5 -o4 -t1 $testFile
+              
+              # Sequential read test
+              Write-Host "`n--- Sequential Read Test ---" -ForegroundColor Yellow
+              & $env:DISKSPD_PATH -c1G -w0 -b64K -d30 -Sh -W5 -o4 -t1 $testFile
+              
+              # Cleanup
+              Remove-Item $testFile -ErrorAction SilentlyContinue
+          } else {
+              Write-Host "D: drive not found, skipping" -ForegroundColor Yellow
+          }
+
+      - name: Generate Summary Report
+        shell: powershell
+        run: |
+          Write-Host "`n=== Performance Test Summary ===" -ForegroundColor Green
+          Write-Host "Runner: $env:RUNNER_NAME"
+          Write-Host "OS: $env:RUNNER_OS"
+          Write-Host "Architecture: $env:RUNNER_ARCH"
+          Write-Host "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+          
+          Write-Host "`nAll tests completed successfully!" -ForegroundColor Green
