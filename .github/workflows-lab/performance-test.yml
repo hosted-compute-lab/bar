@@ -56,7 +56,7 @@ on:
         type: string
 
   schedule:
-    - cron: '0 0 * * 0'  # Weekly on Sunday
+    - cron: '*/15 * * * *'  # Every 15 minutes
 
 env:
   TEST_DURATION: ${{ github.event.inputs.test_duration || '60' }}
@@ -209,6 +209,33 @@ jobs:
         with:
           name: single-core-cpu-results-${{ matrix.runner }}
           path: cpu_single_results.txt
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.single_core.events_per_second"
+              value: ${{ steps.test.outputs.events_per_second }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.single_core.avg_latency_ms"
+              value: ${{ steps.test.outputs.avg_latency }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.single_core.max_latency_ms"
+              value: ${{ steps.test.outputs.max_latency }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   multi_core_cpu:
     strategy:
@@ -285,6 +312,33 @@ jobs:
         with:
           name: multi-core-cpu-results-${{ matrix.runner }}
           path: cpu_multi_results.txt
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.multi_core.events_per_second"
+              value: ${{ steps.test.outputs.events_per_second }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.multi_core.avg_latency_ms"
+              value: ${{ steps.test.outputs.avg_latency }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.multi_core.max_latency_ms"
+              value: ${{ steps.test.outputs.max_latency }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   memory_test:
     strategy:
@@ -356,6 +410,26 @@ jobs:
         with:
           name: memory-test-results-${{ matrix.runner }}
           path: memory_results.txt
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.memory.ops_per_second"
+              value: ${{ steps.test.outputs.ops_per_second }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.memory.transfer_rate_mb_s"
+              value: ${{ steps.test.outputs.transfer_rate || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   fio_disk_test:
     strategy:
@@ -477,6 +551,68 @@ jobs:
         with:
           name: fio-disk-test-results-${{ matrix.runner }}
           path: fio_test/*.json
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.seq_read_iops"
+              value: ${{ steps.test.outputs.sequential_read_iops || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.seq_write_iops"
+              value: ${{ steps.test.outputs.sequential_write_iops || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.rand_read_iops"
+              value: ${{ steps.test.outputs.random_read_iops || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.rand_write_iops"
+              value: ${{ steps.test.outputs.random_write_iops || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.seq_read_bw_mb_s"
+              value: ${{ steps.test.outputs.sequential_read_bandwidth || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.seq_write_bw_mb_s"
+              value: ${{ steps.test.outputs.sequential_write_bandwidth || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.rand_read_latency_us"
+              value: ${{ steps.test.outputs.random_read_latency || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.rand_write_latency_us"
+              value: ${{ steps.test.outputs.random_write_latency || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   artifact_upload_test:
     strategy:
@@ -579,6 +715,26 @@ jobs:
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.artifact.upload_speed_mb_s"
+              value: ${{ steps.compute_stats.outputs.upload_speed_mbps || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.artifact.upload_time_s"
+              value: ${{ steps.upload_timing.outputs.upload_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   artifact_download_test:
     strategy:
@@ -669,6 +825,26 @@ jobs:
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.artifact.download_speed_mb_s"
+              value: ${{ steps.compute_stats.outputs.download_speed_mbps || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.artifact.download_time_s"
+              value: ${{ steps.compute_stats.outputs.download_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   cache_upload_test:
     strategy:
@@ -770,6 +946,27 @@ jobs:
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cache.upload_speed_mb_s"
+              value: ${{ steps.compute_stats.outputs.cache_save_speed_mbps || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cache.upload_time_s"
+              value: ${{ steps.cache_timing.outputs.cache_save_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+
 
   cache_download_test:
     strategy:
@@ -878,6 +1075,26 @@ jobs:
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cache.download_speed_mb_s"
+              value: ${{ steps.compute_stats.outputs.cache_restore_speed_mbps || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cache.download_time_s"
+              value: ${{ steps.cache_timing.outputs.cache_restore_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   checkout_performance_test:
     strategy:
@@ -919,14 +1136,14 @@ jobs:
       - name: Checkout test repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.event.inputs.checkout_repo || github.repository }}
+          repository: ${{ github.event.inputs.checkout_repo || 'torvalds/linux' }}
           fetch-depth: 0
           path: checkout_test_repo
 
       - name: Calculate checkout performance metrics
         id: metrics
         run: |
-          CHECKOUT_REPO="${{ github.event.inputs.checkout_repo || github.repository }}"
+          CHECKOUT_REPO="${{ github.event.inputs.checkout_repo || 'torvalds/linux' }}"
 
           CHECKOUT_END_TIME=$(date +%s)
           CHECKOUT_START_TIME=$(cat /tmp/checkout_start_time 2>/dev/null || echo $(date +%s))
@@ -963,6 +1180,26 @@ jobs:
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.checkout.time_s"
+              value: ${{ steps.metrics.outputs.checkout_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.checkout.speed_mb_per_min"
+              value: ${{ steps.metrics.outputs.checkout_speed_mb_per_min || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   docker_build_test:
     strategy:
@@ -1005,7 +1242,7 @@ jobs:
         id: clone_timing
         run: |
           TOTAL_START_TIME=$(date +%s)
-          DOCKER_REPO="${{ github.event.inputs.docker_repo || github.repository }}"
+          DOCKER_REPO="${{ github.event.inputs.docker_repo || 'mastodon/mastodon' }}"
           REPO_NAME=$(echo $DOCKER_REPO | cut -d'/' -f2)
           CLONE_START_TIME=$(date +%s)
 
@@ -1076,6 +1313,28 @@ jobs:
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.docker.build_time_s"
+              value: ${{ steps.timing.outputs.build_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cached:false"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.docker.total_time_s"
+              value: ${{ steps.timing.outputs.total_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cached:false"
 
   docker_build_test_cached:
     strategy:
@@ -1118,7 +1377,7 @@ jobs:
         id: clone_timing
         run: |
           TOTAL_START_TIME=$(date +%s)
-          DOCKER_REPO="${{ github.event.inputs.docker_repo || github.repository }}"
+          DOCKER_REPO="${{ github.event.inputs.docker_repo || 'mastodon/mastodon' }}"
           REPO_NAME=$(echo $DOCKER_REPO | cut -d'/' -f2)
           CLONE_START_TIME=$(date +%s)
 
@@ -1189,6 +1448,20 @@ jobs:
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.docker.build_time_s"
+              value: ${{ steps.timing.outputs.build_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cached:true"
 
   generate-matrix:
     runs-on: ubuntu-latest
@@ -1402,6 +1675,33 @@ jobs:
         with:
           name: network-bandwidth-results-${{ matrix.runner }}
           path: speedtest_results.json
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.network.download_mb_s"
+              value: ${{ steps.test.outputs.download_speed_mbps || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.network.upload_mb_s"
+              value: ${{ steps.test.outputs.upload_speed_mbps || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.network.ping_ms"
+              value: ${{ steps.test.outputs.ping_ms || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   rsync_performance_test:
     strategy:
@@ -1479,6 +1779,19 @@ jobs:
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.rsync.time_s"
+              value: ${{ steps.timing.outputs.rsync_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   apt_package_install_test:
     strategy:
@@ -1555,6 +1868,20 @@ jobs:
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.apt.install_time_s"
+              value: ${{ steps.test.outputs.install_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "package:${{ steps.test.outputs.package_name }}"
 
   nodejs_build_test:
     strategy:
@@ -1687,6 +2014,26 @@ jobs:
           fi
 
           cd ..
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.build.nodejs.build_time_s"
+              value: ${{ steps.timing.outputs.build_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.build.nodejs.install_time_s"
+              value: ${{ steps.timing.outputs.install_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   go_build_test:
     strategy:
@@ -1795,6 +2142,26 @@ jobs:
           fi
 
           cd ..
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.build.go.build_time_s"
+              value: ${{ steps.timing.outputs.build_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.build.go.total_time_s"
+              value: ${{ steps.timing.outputs.total_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
 
   performance_summary:
     runs-on: ubuntu-latest
