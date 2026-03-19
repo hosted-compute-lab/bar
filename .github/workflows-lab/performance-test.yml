@@ -1,0 +1,1888 @@
+name: Runner Performance Testing
+run-name: Runner Performance Testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_duration:
+        description: 'Test duration in seconds'
+        required: false
+        default: '60'
+        type: string
+      file_size:
+        description: 'File size for I/O tests (GB)'
+        required: false
+        default: '2'
+        type: string
+      docker_repo:
+        description: 'Docker repository to build (org/repo format)'
+        required: false
+        default: 'mastodon/mastodon'
+        type: string
+      checkout_repo:
+        description: 'Repository to checkout for performance testing (org/repo format)'
+        required: false
+        default: 'torvalds/linux'
+        type: string
+      matrix_size:
+        description: 'Number of parallel jobs for queue time testing'
+        required: false
+        default: '10'
+        type: string
+      sync_subtree:
+        description: 'Directory subtree to copy for rsync testing'
+        required: false
+        default: '/usr'
+        type: string
+      sample_percentage:
+        description: 'Percentage of files to sample from source directory for rsync test'
+        required: false
+        default: '3'
+        type: string
+      apt_package:
+        description: 'APT package to install for package installation timing test'
+        required: false
+        default: 'texlive-full'
+        type: string
+      nodejs_repo:
+        description: 'Node.js repository to build (org/repo format)'
+        required: false
+        default: 'microsoft/monaco-editor'
+        type: string
+      go_repo:
+        description: 'Go repository to build (org/repo format)'
+        required: false
+        default: 'kubernetes/kubernetes'
+        type: string
+
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+
+env:
+  TEST_DURATION: ${{ github.event.inputs.test_duration || '60' }}
+  FILE_SIZE: ${{ github.event.inputs.file_size || '2' }}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  system_info:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    outputs:
+      cpu_cores: ${{ steps.sysinfo.outputs.cpu_cores }}
+      total_memory: ${{ steps.sysinfo.outputs.total_memory }}
+      runner_os: ${{ steps.sysinfo.outputs.runner_os }}
+      runner_arch: ${{ steps.sysinfo.outputs.runner_arch }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Get system information
+        id: sysinfo
+        run: |
+          echo "cpu_cores=$(nproc)" >> $GITHUB_OUTPUT
+          echo "total_memory=$(free -m | awk 'NR==2{printf "%.1fGB", $2/1024}')" >> $GITHUB_OUTPUT
+          echo "runner_os=$(uname -s)" >> $GITHUB_OUTPUT
+          echo "runner_arch=$(uname -m)" >> $GITHUB_OUTPUT
+
+          echo "### System Information (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **CPU Cores:** $(nproc)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total Memory:** $(free -m | awk 'NR==2{printf "%.1fGB", $2/1024}')" >> $GITHUB_STEP_SUMMARY
+          echo "- **OS:** $(uname -s)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Architecture:** $(uname -m)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Kernel:** $(uname -r)" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Get hardware information
+        run: |
+          sudo apt update
+          sudo apt install -y lshw
+          sudo lshw -json > hardware_info.json
+
+          echo "### Hardware Information" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          sudo lshw -short >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload hardware information
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardware-info-${{ github.run_id }}-${{ matrix.runner }}
+          path: hardware_info.json
+
+  single_core_cpu:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      events_per_second: ${{ steps.test.outputs.events_per_second }}
+      total_time: ${{ steps.test.outputs.total_time }}
+      min_latency: ${{ steps.test.outputs.min_latency }}
+      avg_latency: ${{ steps.test.outputs.avg_latency }}
+      max_latency: ${{ steps.test.outputs.max_latency }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Install sysbench
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sysbench
+
+      - name: Run single-core CPU test
+        id: test
+        run: |
+          echo "Running single-core CPU performance test..."
+
+          sysbench cpu --cpu-max-prime=20000 --threads=1 --time=${{ env.TEST_DURATION }} run > cpu_single_results.txt
+
+          EVENTS_PER_SEC=$(grep "events per second:" cpu_single_results.txt | awk '{print $4}')
+          TOTAL_TIME=$(grep "total time:" cpu_single_results.txt | awk '{print $3}' | tr -d 's')
+          MIN_LATENCY=$(grep "min:" cpu_single_results.txt | awk '{print $2}')
+          AVG_LATENCY=$(grep "avg:" cpu_single_results.txt | awk '{print $2}')
+          MAX_LATENCY=$(grep "max:" cpu_single_results.txt | awk '{print $2}')
+
+          echo "events_per_second=$EVENTS_PER_SEC" >> $GITHUB_OUTPUT
+          echo "total_time=$TOTAL_TIME" >> $GITHUB_OUTPUT
+          echo "min_latency=$MIN_LATENCY" >> $GITHUB_OUTPUT
+          echo "avg_latency=$AVG_LATENCY" >> $GITHUB_OUTPUT
+          echo "max_latency=$MAX_LATENCY" >> $GITHUB_OUTPUT
+
+          echo "### Single-Core CPU Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Events per second:** $EVENTS_PER_SEC" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Min latency:** ${MIN_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Avg latency:** ${AVG_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max latency:** ${MAX_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload single-core results
+        uses: actions/upload-artifact@v4
+        with:
+          name: single-core-cpu-results-${{ matrix.runner }}
+          path: cpu_single_results.txt
+
+  multi_core_cpu:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      events_per_second: ${{ steps.test.outputs.events_per_second }}
+      total_time: ${{ steps.test.outputs.total_time }}
+      min_latency: ${{ steps.test.outputs.min_latency }}
+      avg_latency: ${{ steps.test.outputs.avg_latency }}
+      max_latency: ${{ steps.test.outputs.max_latency }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Install sysbench
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sysbench
+
+      - name: Run multi-core CPU test
+        id: test
+        run: |
+          CORES=$(nproc)
+          echo "Running multi-core CPU performance test with $CORES threads..."
+
+          sysbench cpu --cpu-max-prime=20000 --threads=$CORES --time=${{ env.TEST_DURATION }} run > cpu_multi_results.txt
+
+          EVENTS_PER_SEC=$(grep "events per second:" cpu_multi_results.txt | awk '{print $4}')
+          TOTAL_TIME=$(grep "total time:" cpu_multi_results.txt | awk '{print $3}' | tr -d 's')
+          MIN_LATENCY=$(grep "min:" cpu_multi_results.txt | awk '{print $2}')
+          AVG_LATENCY=$(grep "avg:" cpu_multi_results.txt | awk '{print $2}')
+          MAX_LATENCY=$(grep "max:" cpu_multi_results.txt | awk '{print $2}')
+
+          echo "events_per_second=$EVENTS_PER_SEC" >> $GITHUB_OUTPUT
+          echo "total_time=$TOTAL_TIME" >> $GITHUB_OUTPUT
+          echo "min_latency=$MIN_LATENCY" >> $GITHUB_OUTPUT
+          echo "avg_latency=$AVG_LATENCY" >> $GITHUB_OUTPUT
+          echo "max_latency=$MAX_LATENCY" >> $GITHUB_OUTPUT
+
+          echo "### Multi-Core CPU Test Results (${{ matrix.runner }} - $CORES cores)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Events per second:** $EVENTS_PER_SEC" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Min latency:** ${MIN_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Avg latency:** ${AVG_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max latency:** ${MAX_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload multi-core results
+        uses: actions/upload-artifact@v4
+        with:
+          name: multi-core-cpu-results-${{ matrix.runner }}
+          path: cpu_multi_results.txt
+
+  memory_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      total_ops: ${{ steps.test.outputs.total_ops }}
+      ops_per_second: ${{ steps.test.outputs.ops_per_second }}
+      transferred_mb: ${{ steps.test.outputs.transferred_mb }}
+      transfer_rate: ${{ steps.test.outputs.transfer_rate }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Install sysbench
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sysbench
+
+      - name: Run memory performance test
+        id: test
+        run: |
+          echo "Running memory performance test..."
+
+          sysbench memory --memory-block-size=1K --memory-total-size=10G --threads=4 --time=${{ env.TEST_DURATION }} run > memory_results.txt
+
+          TOTAL_OPS=$(grep "Total operations:" memory_results.txt | awk '{print $3}')
+          OPS_PER_SEC=$(grep "Total operations:" memory_results.txt | awk -F'[ ()]+' '{print $4}')
+          TRANSFERRED_MB=$(grep "transferred" memory_results.txt | awk '{print $1}' | head -1)
+          TRANSFER_RATE=$(grep "transferred" memory_results.txt | awk -F'[ ()]+' '{print $4}' | head -1 | tr -d '()')
+
+          echo "total_ops=$TOTAL_OPS" >> $GITHUB_OUTPUT
+          echo "ops_per_second=$OPS_PER_SEC" >> $GITHUB_OUTPUT
+          echo "transferred_mb=$TRANSFERRED_MB" >> $GITHUB_OUTPUT
+          echo "transfer_rate=$TRANSFER_RATE" >> $GITHUB_OUTPUT
+
+          echo "### Memory Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total operations:** $TOTAL_OPS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Operations per second:** $OPS_PER_SEC" >> $GITHUB_STEP_SUMMARY
+          echo "- **Data transferred:** ${TRANSFERRED_MB} MB" >> $GITHUB_STEP_SUMMARY
+          echo "- **Transfer rate:** $TRANSFER_RATE" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload memory results
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-test-results-${{ matrix.runner }}
+          path: memory_results.txt
+
+  fio_disk_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      sequential_read_iops: ${{ steps.test.outputs.sequential_read_iops }}
+      sequential_write_iops: ${{ steps.test.outputs.sequential_write_iops }}
+      random_read_iops: ${{ steps.test.outputs.random_read_iops }}
+      random_write_iops: ${{ steps.test.outputs.random_write_iops }}
+      sequential_read_bandwidth: ${{ steps.test.outputs.sequential_read_bandwidth }}
+      sequential_write_bandwidth: ${{ steps.test.outputs.sequential_write_bandwidth }}
+      random_read_latency: ${{ steps.test.outputs.random_read_latency }}
+      random_write_latency: ${{ steps.test.outputs.random_write_latency }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Install FIO
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fio
+
+      - name: Run FIO disk performance tests
+        id: test
+        run: |
+          echo "Running FIO disk performance tests..."
+
+          mkdir -p fio_test
+          cd fio_test
+
+          fio --name=seq_read --ioengine=libaio --iodepth=32 --rw=read --bs=1M --direct=1 \
+              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
+              --output-format=json --output=seq_read.json
+
+          fio --name=seq_write --ioengine=libaio --iodepth=32 --rw=write --bs=1M --direct=1 \
+              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
+              --output-format=json --output=seq_write.json
+
+          fio --name=rand_read --ioengine=libaio --iodepth=32 --rw=randread --bs=4K --direct=1 \
+              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
+              --output-format=json --output=rand_read.json
+
+          fio --name=rand_write --ioengine=libaio --iodepth=32 --rw=randwrite --bs=4K --direct=1 \
+              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
+              --output-format=json --output=rand_write.json
+
+          SEQ_READ_IOPS=$(jq -r '.jobs[0].read.iops // "0"' seq_read.json 2>/dev/null | cut -d'.' -f1)
+          SEQ_WRITE_IOPS=$(jq -r '.jobs[0].write.iops // "0"' seq_write.json 2>/dev/null | cut -d'.' -f1)
+          RAND_READ_IOPS=$(jq -r '.jobs[0].read.iops // "0"' rand_read.json 2>/dev/null | cut -d'.' -f1)
+          RAND_WRITE_IOPS=$(jq -r '.jobs[0].write.iops // "0"' rand_write.json 2>/dev/null | cut -d'.' -f1)
+
+          SEQ_READ_BW=$(jq -r '.jobs[0].read.bw // "0"' seq_read.json 2>/dev/null | cut -d'.' -f1)
+          SEQ_WRITE_BW=$(jq -r '.jobs[0].write.bw // "0"' seq_write.json 2>/dev/null | cut -d'.' -f1)
+
+          RAND_READ_LAT=$(jq -r '.jobs[0].read.lat_ns.mean // "0"' rand_read.json 2>/dev/null)
+          RAND_WRITE_LAT=$(jq -r '.jobs[0].write.lat_ns.mean // "0"' rand_write.json 2>/dev/null)
+
+          if [[ "$RAND_READ_LAT" != "0" ]]; then
+            RAND_READ_LAT=$(echo "scale=2; $RAND_READ_LAT / 1000" | bc -l 2>/dev/null || echo "0")
+          fi
+          if [[ "$RAND_WRITE_LAT" != "0" ]]; then
+            RAND_WRITE_LAT=$(echo "scale=2; $RAND_WRITE_LAT / 1000" | bc -l 2>/dev/null || echo "0")
+          fi
+          if [[ "$SEQ_READ_BW" != "0" ]]; then
+            SEQ_READ_BW=$(echo "scale=2; $SEQ_READ_BW / 1024" | bc -l 2>/dev/null || echo "0")
+          fi
+          if [[ "$SEQ_WRITE_BW" != "0" ]]; then
+            SEQ_WRITE_BW=$(echo "scale=2; $SEQ_WRITE_BW / 1024" | bc -l 2>/dev/null || echo "0")
+          fi
+
+          echo "sequential_read_iops=$SEQ_READ_IOPS" >> $GITHUB_OUTPUT
+          echo "sequential_write_iops=$SEQ_WRITE_IOPS" >> $GITHUB_OUTPUT
+          echo "random_read_iops=$RAND_READ_IOPS" >> $GITHUB_OUTPUT
+          echo "random_write_iops=$RAND_WRITE_IOPS" >> $GITHUB_OUTPUT
+          echo "sequential_read_bandwidth=$SEQ_READ_BW" >> $GITHUB_OUTPUT
+          echo "sequential_write_bandwidth=$SEQ_WRITE_BW" >> $GITHUB_OUTPUT
+          echo "random_read_latency=$RAND_READ_LAT" >> $GITHUB_OUTPUT
+          echo "random_write_latency=$RAND_WRITE_LAT" >> $GITHUB_OUTPUT
+
+          echo "### FIO Disk Performance Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sequential Read IOPS:** $SEQ_READ_IOPS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sequential Write IOPS:** $SEQ_WRITE_IOPS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Random Read IOPS:** $RAND_READ_IOPS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Random Write IOPS:** $RAND_WRITE_IOPS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sequential Read Bandwidth:** ${SEQ_READ_BW} MB/s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sequential Write Bandwidth:** ${SEQ_WRITE_BW} MB/s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Random Read Latency:** ${RAND_READ_LAT}μs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Random Write Latency:** ${RAND_WRITE_LAT}μs" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          cd ..
+
+      - name: Upload FIO results
+        uses: actions/upload-artifact@v4
+        with:
+          name: fio-disk-test-results-${{ matrix.runner }}
+          path: fio_test/*.json
+
+  artifact_upload_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      file_generation_time: ${{ steps.generate.outputs.file_generation_time }}
+      upload_time: ${{ steps.upload_timing.outputs.upload_time }}
+      file_size_mb: ${{ steps.generate.outputs.file_size_mb }}
+      upload_speed_mbps: ${{ steps.compute_stats.outputs.upload_speed_mbps }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Generate test file
+        id: generate
+        run: |
+          FILE_SIZE_GB=${{ env.FILE_SIZE }}
+          echo "Generating ${FILE_SIZE_GB}GB file with random data..."
+
+          COUNT_MB=$((FILE_SIZE_GB * 1024))
+
+          START_TIME=$(date +%s)
+          dd if=/dev/urandom of=test_data_${FILE_SIZE_GB}gb.bin bs=1M count=$COUNT_MB status=progress
+          END_TIME=$(date +%s)
+
+          FILE_GENERATION_TIME=$((END_TIME - START_TIME))
+          FILE_SIZE_MB=$(stat -f%z test_data_${FILE_SIZE_GB}gb.bin 2>/dev/null || stat -c%s test_data_${FILE_SIZE_GB}gb.bin 2>/dev/null || echo 0)
+          FILE_SIZE_MB=$((FILE_SIZE_MB / 1024 / 1024))
+
+          echo "file_generation_time=$FILE_GENERATION_TIME" >> $GITHUB_OUTPUT
+          echo "file_size_mb=$FILE_SIZE_MB" >> $GITHUB_OUTPUT
+
+          echo "### File Generation Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **File generation time:** ${FILE_GENERATION_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+
+          echo $(date +%s) > /tmp/upload_start_time
+
+      - name: Upload test file
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-data-${{ env.FILE_SIZE }}gb-${{ matrix.runner }}
+          path: test_data_${{ env.FILE_SIZE }}gb.bin
+          retention-days: 1
+          compression-level: 0
+
+      - name: Record upload timing
+        id: upload_timing
+        run: |
+          UPLOAD_END_TIME=$(date +%s)
+          UPLOAD_START_TIME=$(cat /tmp/upload_start_time 2>/dev/null || echo $(date +%s))
+          UPLOAD_TIME=$((UPLOAD_END_TIME - UPLOAD_START_TIME))
+
+          echo "upload_time=$UPLOAD_TIME" >> $GITHUB_OUTPUT
+
+          echo "### Upload Timing Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Upload time:** ${UPLOAD_TIME}s" >> $GITHUB_STEP_SUMMARY
+
+      - name: Compute upload statistics
+        id: compute_stats
+        run: |
+          FILE_SIZE_MB=${{ steps.generate.outputs.file_size_mb }}
+          UPLOAD_TIME=${{ steps.upload_timing.outputs.upload_time }}
+
+          UPLOAD_SPEED_MBPS=""
+          if [[ $UPLOAD_TIME -gt 0 && -n "$FILE_SIZE_MB" && "$FILE_SIZE_MB" -gt 0 ]]; then
+            UPLOAD_SPEED_MBPS=$(echo "scale=2; $FILE_SIZE_MB / $UPLOAD_TIME" | bc -l 2>/dev/null || echo "")
+          fi
+
+          echo "upload_speed_mbps=$UPLOAD_SPEED_MBPS" >> $GITHUB_OUTPUT
+
+          echo "### Upload Statistics (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "$UPLOAD_SPEED_MBPS" ]]; then
+            echo "- **Upload speed:** ${UPLOAD_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Upload speed:** Unable to calculate" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  artifact_download_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: [system_info, artifact_upload_test]
+    outputs:
+      download_time: ${{ steps.compute_stats.outputs.download_time }}
+      verification_time: ${{ steps.compute_stats.outputs.verification_time }}
+      download_speed_mbps: ${{ steps.compute_stats.outputs.download_speed_mbps }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Start download timing
+        run: |
+          echo "Starting artifact download..."
+          echo $(date +%s) > /tmp/download_start_time
+
+      - name: Download test file
+        uses: actions/download-artifact@v4
+        with:
+          name: test-data-${{ env.FILE_SIZE }}gb-${{ matrix.runner }}
+          path: downloaded/
+
+      - name: Record download completion and verify file
+        id: compute_stats
+        run: |
+          DOWNLOAD_END_TIME=$(date +%s)
+          DOWNLOAD_START_TIME=$(cat /tmp/download_start_time 2>/dev/null || echo $(date +%s))
+          DOWNLOAD_TIME=$((DOWNLOAD_END_TIME - DOWNLOAD_START_TIME))
+
+          VERIFY_START_TIME=$(date +%s)
+
+          FILE_SIZE_GB=${{ env.FILE_SIZE }}
+          if [[ -f "downloaded/test_data_${FILE_SIZE_GB}gb.bin" ]]; then
+            FILE_SIZE_MB=$(stat -f%z downloaded/test_data_${FILE_SIZE_GB}gb.bin 2>/dev/null || stat -c%s downloaded/test_data_${FILE_SIZE_GB}gb.bin 2>/dev/null || echo 0)
+            FILE_SIZE_MB=$((FILE_SIZE_MB / 1024 / 1024))
+            dd if=downloaded/test_data_${FILE_SIZE_GB}gb.bin of=/dev/null bs=1M count=100 status=none
+            VERIFY_STATUS="SUCCESS"
+          else
+            FILE_SIZE_MB=0
+            VERIFY_STATUS="FAILED"
+          fi
+
+          VERIFY_END_TIME=$(date +%s)
+          VERIFICATION_TIME=$((VERIFY_END_TIME - VERIFY_START_TIME))
+
+          DOWNLOAD_SPEED_MBPS=""
+          if [[ $DOWNLOAD_TIME -gt 0 && -n "$FILE_SIZE_MB" && "$FILE_SIZE_MB" -gt 0 ]]; then
+            DOWNLOAD_SPEED_MBPS=$(echo "scale=2; $FILE_SIZE_MB / $DOWNLOAD_TIME" | bc -l 2>/dev/null || echo "")
+          fi
+
+          echo "download_time=$DOWNLOAD_TIME" >> $GITHUB_OUTPUT
+          echo "verification_time=$VERIFICATION_TIME" >> $GITHUB_OUTPUT
+          echo "download_speed_mbps=$DOWNLOAD_SPEED_MBPS" >> $GITHUB_OUTPUT
+
+          echo "### Artifact Download Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Download time:** ${DOWNLOAD_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Verification time:** ${VERIFICATION_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+          echo "- **Verification status:** $VERIFY_STATUS" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "$DOWNLOAD_SPEED_MBPS" ]]; then
+            echo "- **Download speed:** ${DOWNLOAD_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Download speed:** Unable to calculate" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  cache_upload_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      file_generation_time: ${{ steps.generate.outputs.file_generation_time }}
+      cache_save_time: ${{ steps.cache_timing.outputs.cache_save_time }}
+      file_size_mb: ${{ steps.generate.outputs.file_size_mb }}
+      cache_save_speed_mbps: ${{ steps.compute_stats.outputs.cache_save_speed_mbps }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Generate cache test file
+        id: generate
+        run: |
+          FILE_SIZE_GB=${{ env.FILE_SIZE }}
+          echo "Generating ${FILE_SIZE_GB}GB file for cache testing..."
+
+          mkdir -p cache_test_data
+          COUNT_MB=$((FILE_SIZE_GB * 1024))
+
+          START_TIME=$(date +%s)
+          dd if=/dev/urandom of=cache_test_data/test_data_${FILE_SIZE_GB}gb_cache.bin bs=1M count=$COUNT_MB status=progress
+          END_TIME=$(date +%s)
+
+          FILE_GENERATION_TIME=$((END_TIME - START_TIME))
+          FILE_SIZE_MB=$(stat -f%z cache_test_data/test_data_${FILE_SIZE_GB}gb_cache.bin 2>/dev/null || stat -c%s cache_test_data/test_data_${FILE_SIZE_GB}gb_cache.bin 2>/dev/null || echo 0)
+          FILE_SIZE_MB=$((FILE_SIZE_MB / 1024 / 1024))
+
+          echo "file_generation_time=$FILE_GENERATION_TIME" >> $GITHUB_OUTPUT
+          echo "file_size_mb=$FILE_SIZE_MB" >> $GITHUB_OUTPUT
+
+          echo "### Cache File Generation Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **File generation time:** ${FILE_GENERATION_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+
+          echo $(date +%s) > /tmp/cache_save_start_time
+
+      - name: Save to cache
+        uses: actions/cache/save@v4
+        with:
+          path: cache_test_data/
+          key: cache-perf-test-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}
+
+      - name: Record cache save timing
+        id: cache_timing
+        run: |
+          CACHE_SAVE_END_TIME=$(date +%s)
+          CACHE_SAVE_START_TIME=$(cat /tmp/cache_save_start_time 2>/dev/null || echo $(date +%s))
+          CACHE_SAVE_TIME=$((CACHE_SAVE_END_TIME - CACHE_SAVE_START_TIME))
+
+          echo "cache_save_time=$CACHE_SAVE_TIME" >> $GITHUB_OUTPUT
+
+          echo "### Cache Save Timing Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cache save time:** ${CACHE_SAVE_TIME}s" >> $GITHUB_STEP_SUMMARY
+
+      - name: Compute cache save statistics
+        id: compute_stats
+        run: |
+          FILE_SIZE_MB=${{ steps.generate.outputs.file_size_mb }}
+          CACHE_SAVE_TIME=${{ steps.cache_timing.outputs.cache_save_time }}
+
+          CACHE_SAVE_SPEED_MBPS=""
+          if [[ $CACHE_SAVE_TIME -gt 0 && -n "$FILE_SIZE_MB" && "$FILE_SIZE_MB" -gt 0 ]]; then
+            CACHE_SAVE_SPEED_MBPS=$(echo "scale=2; $FILE_SIZE_MB / $CACHE_SAVE_TIME" | bc -l 2>/dev/null || echo "")
+          fi
+
+          echo "cache_save_speed_mbps=$CACHE_SAVE_SPEED_MBPS" >> $GITHUB_OUTPUT
+
+          echo "### Cache Save Statistics (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "$CACHE_SAVE_SPEED_MBPS" ]]; then
+            echo "- **Cache save speed:** ${CACHE_SAVE_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Cache save speed:** Unable to calculate" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  cache_download_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: [system_info, cache_upload_test]
+    outputs:
+      cache_restore_time: ${{ steps.cache_timing.outputs.cache_restore_time }}
+      verification_time: ${{ steps.verification.outputs.verification_time }}
+      cache_restore_speed_mbps: ${{ steps.compute_stats.outputs.cache_restore_speed_mbps }}
+      cache_hit: ${{ steps.cache_restore.outputs.cache-hit }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Prepare cache restore timing
+        run: |
+          echo $(date +%s) > /tmp/cache_restore_start_time
+
+      - name: Restore from cache
+        id: cache_restore
+        uses: actions/cache/restore@v4
+        with:
+          path: cache_test_data/
+          key: cache-perf-test-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}
+
+      - name: Record cache restore timing
+        id: cache_timing
+        run: |
+          CACHE_RESTORE_END_TIME=$(date +%s)
+          CACHE_RESTORE_START_TIME=$(cat /tmp/cache_restore_start_time 2>/dev/null || echo $(date +%s))
+          CACHE_RESTORE_TIME=$((CACHE_RESTORE_END_TIME - CACHE_RESTORE_START_TIME))
+
+          echo "cache_restore_time=$CACHE_RESTORE_TIME" >> $GITHUB_OUTPUT
+
+          echo "### Cache Restore Timing Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cache restore time:** ${CACHE_RESTORE_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cache hit:** ${{ steps.cache_restore.outputs.cache-hit }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Verify cached file
+        id: verification
+        run: |
+          VERIFY_START_TIME=$(date +%s)
+
+          FILE_SIZE_GB=${{ env.FILE_SIZE }}
+          if [[ -f "cache_test_data/test_data_${FILE_SIZE_GB}gb_cache.bin" ]]; then
+            FILE_SIZE_MB=$(stat -f%z cache_test_data/test_data_${FILE_SIZE_GB}gb_cache.bin 2>/dev/null || stat -c%s cache_test_data/test_data_${FILE_SIZE_GB}gb_cache.bin 2>/dev/null || echo 0)
+            FILE_SIZE_MB=$((FILE_SIZE_MB / 1024 / 1024))
+            dd if=cache_test_data/test_data_${FILE_SIZE_GB}gb_cache.bin of=/dev/null bs=1M count=100 status=none 2>/dev/null
+            VERIFY_STATUS="SUCCESS"
+          else
+            FILE_SIZE_MB=0
+            VERIFY_STATUS="FAILED"
+          fi
+
+          VERIFY_END_TIME=$(date +%s)
+          VERIFICATION_TIME=$((VERIFY_END_TIME - VERIFY_START_TIME))
+
+          echo "verification_time=$VERIFICATION_TIME" >> $GITHUB_OUTPUT
+
+          echo "### Cache Verification Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Verification time:** ${VERIFICATION_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+          echo "- **Verification status:** $VERIFY_STATUS" >> $GITHUB_STEP_SUMMARY
+
+      - name: Compute cache restore statistics
+        id: compute_stats
+        run: |
+          FILE_SIZE_MB=${{ needs.cache_upload_test.outputs.file_size_mb }}
+          CACHE_RESTORE_TIME=${{ steps.cache_timing.outputs.cache_restore_time }}
+          CACHE_HIT="${{ steps.cache_restore.outputs.cache-hit }}"
+
+          CACHE_RESTORE_SPEED_MBPS=""
+          if [[ "$CACHE_HIT" == "true" && $CACHE_RESTORE_TIME -gt 0 && -n "$FILE_SIZE_MB" && "$FILE_SIZE_MB" -gt 0 ]]; then
+            CACHE_RESTORE_SPEED_MBPS=$(echo "scale=2; $FILE_SIZE_MB / $CACHE_RESTORE_TIME" | bc -l 2>/dev/null || echo "")
+          fi
+
+          echo "cache_restore_speed_mbps=$CACHE_RESTORE_SPEED_MBPS" >> $GITHUB_OUTPUT
+
+          echo "### Cache Restore Statistics (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "$CACHE_RESTORE_SPEED_MBPS" ]]; then
+            echo "- **Cache restore speed:** ${CACHE_RESTORE_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Cache restore speed:** Unable to calculate" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  checkout_performance_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      checkout_time: ${{ steps.metrics.outputs.checkout_time }}
+      repo_size_mb: ${{ steps.metrics.outputs.repo_size_mb }}
+      checkout_speed_mb_per_min: ${{ steps.metrics.outputs.checkout_speed_mb_per_min }}
+      checkout_repo: ${{ steps.metrics.outputs.checkout_repo }}
+      commit_count: ${{ steps.metrics.outputs.commit_count }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Start checkout timing
+        run: |
+          echo $(date +%s) > /tmp/checkout_start_time
+
+      - name: Checkout test repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.checkout_repo || github.repository }}
+          fetch-depth: 0
+          path: checkout_test_repo
+
+      - name: Calculate checkout performance metrics
+        id: metrics
+        run: |
+          CHECKOUT_REPO="${{ github.event.inputs.checkout_repo || github.repository }}"
+
+          CHECKOUT_END_TIME=$(date +%s)
+          CHECKOUT_START_TIME=$(cat /tmp/checkout_start_time 2>/dev/null || echo $(date +%s))
+          CHECKOUT_TIME=$((CHECKOUT_END_TIME - CHECKOUT_START_TIME))
+
+          cd checkout_test_repo
+          COMMIT_COUNT=$(git rev-list --all --count 2>/dev/null || echo "0")
+          cd ..
+
+          REPO_SIZE_BYTES=$(du -s checkout_test_repo 2>/dev/null | awk '{print $1}' || echo "0")
+          REPO_SIZE_MB=$((REPO_SIZE_BYTES / 1024))
+
+          CHECKOUT_SPEED_MB_PER_MIN=""
+          if [[ $CHECKOUT_TIME -gt 0 && $REPO_SIZE_MB -gt 0 ]]; then
+            CHECKOUT_SPEED_MB_PER_MIN=$(echo "scale=2; $REPO_SIZE_MB * 60 / $CHECKOUT_TIME" | bc -l 2>/dev/null || echo "")
+          fi
+
+          echo "checkout_time=$CHECKOUT_TIME" >> $GITHUB_OUTPUT
+          echo "repo_size_mb=$REPO_SIZE_MB" >> $GITHUB_OUTPUT
+          echo "checkout_speed_mb_per_min=$CHECKOUT_SPEED_MB_PER_MIN" >> $GITHUB_OUTPUT
+          echo "checkout_repo=$CHECKOUT_REPO" >> $GITHUB_OUTPUT
+          echo "commit_count=$COMMIT_COUNT" >> $GITHUB_OUTPUT
+
+          echo "### Repository Checkout Performance Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** $CHECKOUT_REPO" >> $GITHUB_STEP_SUMMARY
+          echo "- **Checkout time:** ${CHECKOUT_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository size:** ${REPO_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit count:** $COMMIT_COUNT" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "$CHECKOUT_SPEED_MB_PER_MIN" ]]; then
+            echo "- **Checkout speed:** ${CHECKOUT_SPEED_MB_PER_MIN} MB/min" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  docker_build_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      clone_time: ${{ steps.timing.outputs.clone_time }}
+      build_time: ${{ steps.timing.outputs.build_time }}
+      total_time: ${{ steps.timing.outputs.total_time }}
+      image_size_mb: ${{ steps.timing.outputs.image_size_mb }}
+      build_speed_mb_per_min: ${{ steps.timing.outputs.build_speed_mb_per_min }}
+      docker_repo: ${{ steps.clone_timing.outputs.docker_repo }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Clone repository
+        id: clone_timing
+        run: |
+          TOTAL_START_TIME=$(date +%s)
+          DOCKER_REPO="${{ github.event.inputs.docker_repo || github.repository }}"
+          REPO_NAME=$(echo $DOCKER_REPO | cut -d'/' -f2)
+          CLONE_START_TIME=$(date +%s)
+
+          echo "clone_start_time=$CLONE_START_TIME" >> $GITHUB_OUTPUT
+          echo "total_start_time=$TOTAL_START_TIME" >> $GITHUB_OUTPUT
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "docker_repo=$DOCKER_REPO" >> $GITHUB_OUTPUT
+
+      - name: Checkout docker repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.clone_timing.outputs.docker_repo }}
+          path: ${{ steps.clone_timing.outputs.repo_name }}
+
+      - name: Calculate clone time
+        id: clone_time_calc
+        run: |
+          CLONE_END_TIME=$(date +%s)
+          CLONE_START_TIME=${{ steps.clone_timing.outputs.clone_start_time }}
+          CLONE_TIME=$((CLONE_END_TIME - CLONE_START_TIME))
+          echo "clone_time=$CLONE_TIME" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ steps.clone_timing.outputs.repo_name }}
+          tags: ${{ steps.clone_timing.outputs.repo_name }}-perf-test:latest
+          load: true
+          cache-to: type=gha,mode=max
+
+      - name: Calculate performance metrics
+        id: timing
+        run: |
+          TOTAL_START_TIME=${{ steps.clone_timing.outputs.total_start_time }}
+          CLONE_TIME=${{ steps.clone_time_calc.outputs.clone_time }}
+
+          TOTAL_END_TIME=$(date +%s)
+          TOTAL_TIME=$((TOTAL_END_TIME - TOTAL_START_TIME))
+          BUILD_TIME=$((TOTAL_TIME - CLONE_TIME))
+
+          REPO_NAME="${{ steps.clone_timing.outputs.repo_name }}"
+          IMAGE_SIZE_BYTES=$(docker image inspect $REPO_NAME-perf-test:latest --format='{{.Size}}')
+          IMAGE_SIZE_MB=$((IMAGE_SIZE_BYTES / 1024 / 1024))
+
+          BUILD_SPEED_MB_PER_MIN=""
+          if [[ $BUILD_TIME -gt 0 ]]; then
+            BUILD_SPEED_MB_PER_MIN=$(echo "scale=2; $IMAGE_SIZE_MB * 60 / $BUILD_TIME" | bc -l 2>/dev/null || echo "")
+          fi
+
+          echo "clone_time=$CLONE_TIME" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+          echo "total_time=$TOTAL_TIME" >> $GITHUB_OUTPUT
+          echo "image_size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
+          echo "build_speed_mb_per_min=$BUILD_SPEED_MB_PER_MIN" >> $GITHUB_OUTPUT
+
+          echo "### Docker Build Performance Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** ${{ steps.clone_timing.outputs.docker_repo }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Clone time:** ${CLONE_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build time:** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image size:** ${IMAGE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "$BUILD_SPEED_MB_PER_MIN" ]]; then
+            echo "- **Build efficiency:** ${BUILD_SPEED_MB_PER_MIN} MB/min" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  docker_build_test_cached:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: [system_info, docker_build_test]
+    outputs:
+      clone_time: ${{ steps.timing.outputs.clone_time }}
+      build_time: ${{ steps.timing.outputs.build_time }}
+      total_time: ${{ steps.timing.outputs.total_time }}
+      image_size_mb: ${{ steps.timing.outputs.image_size_mb }}
+      build_speed_mb_per_min: ${{ steps.timing.outputs.build_speed_mb_per_min }}
+      docker_repo: ${{ steps.clone_timing.outputs.docker_repo }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Clone repository
+        id: clone_timing
+        run: |
+          TOTAL_START_TIME=$(date +%s)
+          DOCKER_REPO="${{ github.event.inputs.docker_repo || github.repository }}"
+          REPO_NAME=$(echo $DOCKER_REPO | cut -d'/' -f2)
+          CLONE_START_TIME=$(date +%s)
+
+          echo "clone_start_time=$CLONE_START_TIME" >> $GITHUB_OUTPUT
+          echo "total_start_time=$TOTAL_START_TIME" >> $GITHUB_OUTPUT
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "docker_repo=$DOCKER_REPO" >> $GITHUB_OUTPUT
+
+      - name: Checkout docker repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.clone_timing.outputs.docker_repo }}
+          path: ${{ steps.clone_timing.outputs.repo_name }}-cached
+
+      - name: Calculate clone time
+        id: clone_time_calc
+        run: |
+          CLONE_END_TIME=$(date +%s)
+          CLONE_START_TIME=${{ steps.clone_timing.outputs.clone_start_time }}
+          CLONE_TIME=$((CLONE_END_TIME - CLONE_START_TIME))
+          echo "clone_time=$CLONE_TIME" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image (cached)
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ steps.clone_timing.outputs.repo_name }}-cached
+          tags: ${{ steps.clone_timing.outputs.repo_name }}-perf-test-cached:latest
+          load: true
+          cache-from: type=gha
+
+      - name: Calculate performance metrics
+        id: timing
+        run: |
+          TOTAL_START_TIME=${{ steps.clone_timing.outputs.total_start_time }}
+          CLONE_TIME=${{ steps.clone_time_calc.outputs.clone_time }}
+
+          TOTAL_END_TIME=$(date +%s)
+          TOTAL_TIME=$((TOTAL_END_TIME - TOTAL_START_TIME))
+          BUILD_TIME=$((TOTAL_TIME - CLONE_TIME))
+
+          REPO_NAME="${{ steps.clone_timing.outputs.repo_name }}"
+          IMAGE_SIZE_BYTES=$(docker image inspect $REPO_NAME-perf-test-cached:latest --format='{{.Size}}')
+          IMAGE_SIZE_MB=$((IMAGE_SIZE_BYTES / 1024 / 1024))
+
+          BUILD_SPEED_MB_PER_MIN=""
+          if [[ $BUILD_TIME -gt 0 ]]; then
+            BUILD_SPEED_MB_PER_MIN=$(echo "scale=2; $IMAGE_SIZE_MB * 60 / $BUILD_TIME" | bc -l 2>/dev/null || echo "")
+          fi
+
+          echo "clone_time=$CLONE_TIME" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+          echo "total_time=$TOTAL_TIME" >> $GITHUB_OUTPUT
+          echo "image_size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
+          echo "build_speed_mb_per_min=$BUILD_SPEED_MB_PER_MIN" >> $GITHUB_OUTPUT
+
+          echo "### Docker Build Performance Results - Cached (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** ${{ steps.clone_timing.outputs.docker_repo }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Clone time:** ${CLONE_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build time:** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image size:** ${IMAGE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "$BUILD_SPEED_MB_PER_MIN" ]]; then
+            echo "- **Build efficiency:** ${BUILD_SPEED_MB_PER_MIN} MB/min" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set matrix
+        id: set-matrix
+        run: |
+          MATRIX_SIZE=${{ github.event.inputs.matrix_size || '10' }}
+          MATRIX_JSON=$(seq 1 $MATRIX_SIZE | jq -R -s -c 'split("\n")[:-1]')
+          echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
+
+  start-queue-test:
+    needs: generate-matrix
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+        job_id: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Simple test job
+        run: |
+          echo "Hello from matrix job ${{ matrix.job_id }} on ${{ matrix.runner }}"
+
+  finish-queue-test:
+    runs-on: ubuntu-latest
+    needs: [system_info, start-queue-test]
+    outputs:
+      min_queue_time: ${{ steps.analyze.outputs.min_queue_time }}
+      max_queue_time: ${{ steps.analyze.outputs.max_queue_time }}
+      avg_queue_time: ${{ steps.analyze.outputs.avg_queue_time }}
+      total_jobs: ${{ steps.analyze.outputs.total_jobs }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Analyze queue times
+        id: analyze
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Analyzing queue times for workflow run ${{ github.run_id }}..."
+
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs > jobs_data.json
+
+          jq -r '.jobs[] | select(.name | contains("start-queue-test")) | "\(.created_at),\(.started_at),\(.name)"' jobs_data.json > queue_times.csv
+
+          echo "Job queue times:" > queue_analysis.txt
+
+          QUEUE_TIMES=()
+          TOTAL_JOBS=0
+
+          while IFS=',' read -r created_at started_at job_name; do
+            if [[ -n "$created_at" && -n "$started_at" && "$created_at" != "null" && "$started_at" != "null" ]]; then
+              CREATED_EPOCH=$(date -d "$created_at" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null)
+              STARTED_EPOCH=$(date -d "$started_at" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%SZ" "$started_at" +%s 2>/dev/null)
+
+              if [[ -n "$CREATED_EPOCH" && -n "$STARTED_EPOCH" ]]; then
+                QUEUE_TIME=$((STARTED_EPOCH - CREATED_EPOCH))
+                QUEUE_TIMES+=($QUEUE_TIME)
+                echo "$job_name: ${QUEUE_TIME}s" >> queue_analysis.txt
+                TOTAL_JOBS=$((TOTAL_JOBS + 1))
+              fi
+            fi
+          done < queue_times.csv
+
+          if [[ ${#QUEUE_TIMES[@]} -gt 0 ]]; then
+            IFS=$'\n' sorted_times=($(sort -n <<< "${QUEUE_TIMES[*]}"))
+            MIN_QUEUE_TIME=${sorted_times[0]}
+            MAX_QUEUE_TIME=${sorted_times[-1]}
+
+            SUM=0
+            for time in "${QUEUE_TIMES[@]}"; do
+              SUM=$((SUM + time))
+            done
+            AVG_QUEUE_TIME=$((SUM / ${#QUEUE_TIMES[@]}))
+          else
+            MIN_QUEUE_TIME=0
+            MAX_QUEUE_TIME=0
+            AVG_QUEUE_TIME=0
+            TOTAL_JOBS=0
+            echo "No valid queue time data found" >> queue_analysis.txt
+          fi
+
+          echo "min_queue_time=$MIN_QUEUE_TIME" >> $GITHUB_OUTPUT
+          echo "max_queue_time=$MAX_QUEUE_TIME" >> $GITHUB_OUTPUT
+          echo "avg_queue_time=$AVG_QUEUE_TIME" >> $GITHUB_OUTPUT
+          echo "total_jobs=$TOTAL_JOBS" >> $GITHUB_OUTPUT
+
+          echo "### Job Queue Time Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "- **Jobs analyzed:** $TOTAL_JOBS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Min queue time:** ${MIN_QUEUE_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max queue time:** ${MAX_QUEUE_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Average queue time:** ${AVG_QUEUE_TIME}s" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload queue analysis results
+        uses: actions/upload-artifact@v4
+        with:
+          name: queue-analysis-results
+          path: |
+            queue_analysis.txt
+            queue_times.csv
+            jobs_data.json
+
+  network_bandwidth_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      download_speed_mbps: ${{ steps.test.outputs.download_speed_mbps }}
+      upload_speed_mbps: ${{ steps.test.outputs.upload_speed_mbps }}
+      ping_ms: ${{ steps.test.outputs.ping_ms }}
+      server_location: ${{ steps.test.outputs.server_location }}
+      server_name: ${{ steps.test.outputs.server_name }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Install speedtest-cli
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y speedtest-cli
+
+      - name: Run network bandwidth test
+        id: test
+        run: |
+          echo "Running network bandwidth test..."
+
+          speedtest-cli --json > speedtest_results.json
+
+          DOWNLOAD_SPEED_BPS=$(jq -r '.download // "0"' speedtest_results.json)
+          UPLOAD_SPEED_BPS=$(jq -r '.upload // "0"' speedtest_results.json)
+          PING_MS=$(jq -r '.ping // "0"' speedtest_results.json)
+          SERVER_NAME=$(jq -r '.server.name // "Unknown"' speedtest_results.json)
+          SERVER_LOCATION=$(jq -r '.server.country // "Unknown"' speedtest_results.json)
+
+          DOWNLOAD_SPEED_MBPS="0"
+          UPLOAD_SPEED_MBPS="0"
+
+          if [[ "$DOWNLOAD_SPEED_BPS" != "0" && "$DOWNLOAD_SPEED_BPS" != "null" ]]; then
+            DOWNLOAD_SPEED_MBPS=$(echo "scale=2; $DOWNLOAD_SPEED_BPS / 8000000" | bc -l 2>/dev/null || echo "0")
+          fi
+          if [[ "$UPLOAD_SPEED_BPS" != "0" && "$UPLOAD_SPEED_BPS" != "null" ]]; then
+            UPLOAD_SPEED_MBPS=$(echo "scale=2; $UPLOAD_SPEED_BPS / 8000000" | bc -l 2>/dev/null || echo "0")
+          fi
+          if [[ "$PING_MS" != "null" && "$PING_MS" != "0" ]]; then
+            PING_MS=$(echo "scale=2; $PING_MS / 1" | bc -l 2>/dev/null || echo "0")
+          fi
+
+          echo "download_speed_mbps=$DOWNLOAD_SPEED_MBPS" >> $GITHUB_OUTPUT
+          echo "upload_speed_mbps=$UPLOAD_SPEED_MBPS" >> $GITHUB_OUTPUT
+          echo "ping_ms=$PING_MS" >> $GITHUB_OUTPUT
+          echo "server_location=$SERVER_LOCATION" >> $GITHUB_OUTPUT
+          echo "server_name=$SERVER_NAME" >> $GITHUB_OUTPUT
+
+          echo "### Network Bandwidth Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Download speed:** ${DOWNLOAD_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Upload speed:** ${UPLOAD_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ping:** ${PING_MS} ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Server:** $SERVER_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "- **Server Location:** $SERVER_LOCATION" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload speedtest results
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-bandwidth-results-${{ matrix.runner }}
+          path: speedtest_results.json
+
+  rsync_performance_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      rsync_time: ${{ steps.timing.outputs.rsync_time }}
+      total_time: ${{ steps.timing.outputs.total_time }}
+      files_copied: ${{ steps.timing.outputs.files_copied }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Run rsync performance test
+        id: timing
+        run: |
+          SYNC_SUBTREE="${{ github.event.inputs.sync_subtree || '/usr' }}"
+          SAMPLE_PERCENTAGE="${{ github.event.inputs.sample_percentage || '3' }}"
+
+          TOTAL_START_TIME=$(date +%s)
+
+          sudo find "$SYNC_SUBTREE" -type f > /tmp/source_files.txt 2>/dev/null || true
+          TOTAL_SOURCE_FILES=$(wc -l < /tmp/source_files.txt || echo "0")
+
+          if [[ $TOTAL_SOURCE_FILES -gt 0 ]]; then
+            FILES_TO_SAMPLE=$((TOTAL_SOURCE_FILES * SAMPLE_PERCENTAGE / 100))
+            if [[ $FILES_TO_SAMPLE -lt 1 ]]; then FILES_TO_SAMPLE=1; fi
+            shuf /tmp/source_files.txt -o /tmp/shuffled_source_files.txt
+            head -n $FILES_TO_SAMPLE /tmp/shuffled_source_files.txt > /tmp/sampled_files.txt
+            FILES_COPIED=$FILES_TO_SAMPLE
+          else
+            FILES_COPIED=0
+          fi
+
+          RSYNC_START_TIME=$(date +%s)
+          sudo mkdir -p /tmp/rsync_test_dst
+          sudo rsync -av --files-from=/tmp/sampled_files.txt / /tmp/rsync_test_dst/ > /tmp/rsync_output.txt 2>/dev/null || true
+          RSYNC_END_TIME=$(date +%s)
+          RSYNC_TIME=$((RSYNC_END_TIME - RSYNC_START_TIME))
+
+          TOTAL_END_TIME=$(date +%s)
+          TOTAL_TIME=$((TOTAL_END_TIME - TOTAL_START_TIME))
+
+          echo "rsync_time=$RSYNC_TIME" >> $GITHUB_OUTPUT
+          echo "total_time=$TOTAL_TIME" >> $GITHUB_OUTPUT
+          echo "files_copied=$FILES_COPIED" >> $GITHUB_OUTPUT
+
+          echo "### Rsync Performance Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source directory:** $SYNC_SUBTREE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sample percentage:** $SAMPLE_PERCENTAGE%" >> $GITHUB_STEP_SUMMARY
+          echo "- **Files copied:** $FILES_COPIED" >> $GITHUB_STEP_SUMMARY
+          echo "- **Rsync time:** ${RSYNC_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  apt_package_install_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      package_name: ${{ steps.test.outputs.package_name }}
+      install_time: ${{ steps.test.outputs.install_time }}
+      package_size_mb: ${{ steps.test.outputs.package_size_mb }}
+      download_speed_mb_per_s: ${{ steps.test.outputs.download_speed_mb_per_s }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Test APT package installation performance
+        id: test
+        run: |
+          APT_PACKAGE="${{ github.event.inputs.apt_package || 'texlive-full' }}"
+
+          sudo apt-get update
+
+          PKG_SIZE_KB=$(apt-cache show "$APT_PACKAGE" | grep "^Size: " | head -n1 | awk '{print $2}')
+          if [[ -n "$PKG_SIZE_KB" ]]; then
+            PKG_SIZE_MB=$(echo "scale=2; $PKG_SIZE_KB / 1024 / 1024" | bc -l)
+          else
+            PKG_SIZE_MB="unknown"
+          fi
+
+          START_TIME=$(date +%s.%N)
+          sudo apt-get install -y "$APT_PACKAGE"
+          END_TIME=$(date +%s.%N)
+
+          INSTALL_TIME=$(echo "$END_TIME - $START_TIME" | bc -l | awk '{printf "%.2f", $1}')
+
+          if [[ "$PKG_SIZE_MB" != "unknown" && $(echo "$PKG_SIZE_MB > 0" | bc -l) == "1" ]]; then
+            DOWNLOAD_SPEED=$(echo "scale=2; $PKG_SIZE_MB / $INSTALL_TIME" | bc -l)
+          else
+            DOWNLOAD_SPEED="unknown"
+          fi
+
+          echo "package_name=$APT_PACKAGE" >> $GITHUB_OUTPUT
+          echo "install_time=$INSTALL_TIME" >> $GITHUB_OUTPUT
+          echo "package_size_mb=$PKG_SIZE_MB" >> $GITHUB_OUTPUT
+          echo "download_speed_mb_per_s=$DOWNLOAD_SPEED" >> $GITHUB_OUTPUT
+
+          echo "### APT Package Installation Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package:** $APT_PACKAGE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Installation time:** ${INSTALL_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package size:** ${PKG_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+          if [[ "$DOWNLOAD_SPEED" != "unknown" ]]; then
+            echo "- **Effective download speed:** ${DOWNLOAD_SPEED} MB/s" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  nodejs_build_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      clone_time: ${{ steps.timing.outputs.clone_time }}
+      install_time: ${{ steps.timing.outputs.install_time }}
+      build_time: ${{ steps.timing.outputs.build_time }}
+      total_time: ${{ steps.timing.outputs.total_time }}
+      package_manager: ${{ steps.timing.outputs.package_manager }}
+      dependencies_count: ${{ steps.timing.outputs.dependencies_count }}
+      nodejs_repo: ${{ steps.clone_timing.outputs.nodejs_repo }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Setup timing
+        id: clone_timing
+        run: |
+          TOTAL_START_TIME=$(date +%s)
+          NODEJS_REPO="${{ github.event.inputs.nodejs_repo || 'microsoft/monaco-editor' }}"
+          REPO_NAME=$(echo $NODEJS_REPO | cut -d'/' -f2)
+          CLONE_START_TIME=$(date +%s)
+
+          echo "clone_start_time=$CLONE_START_TIME" >> $GITHUB_OUTPUT
+          echo "total_start_time=$TOTAL_START_TIME" >> $GITHUB_OUTPUT
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "nodejs_repo=$NODEJS_REPO" >> $GITHUB_OUTPUT
+
+      - name: Checkout Node.js repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.clone_timing.outputs.nodejs_repo }}
+          path: ${{ steps.clone_timing.outputs.repo_name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Calculate performance metrics
+        id: timing
+        run: |
+          TOTAL_START_TIME=${{ steps.clone_timing.outputs.total_start_time }}
+          CLONE_START_TIME=${{ steps.clone_timing.outputs.clone_start_time }}
+          REPO_NAME="${{ steps.clone_timing.outputs.repo_name }}"
+
+          CLONE_END_TIME=$(date +%s)
+          CLONE_TIME=$((CLONE_END_TIME - CLONE_START_TIME))
+
+          cd $REPO_NAME
+
+          PACKAGE_MANAGER="npm"
+          if [[ -f "yarn.lock" ]]; then
+            PACKAGE_MANAGER="yarn"
+          elif [[ -f "pnpm-lock.yaml" ]]; then
+            PACKAGE_MANAGER="pnpm"
+            npm install -g pnpm
+          fi
+
+          DEPENDENCIES_COUNT=0
+          if [[ -f "package.json" ]]; then
+            DEPENDENCIES_COUNT=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | length' package.json 2>/dev/null || echo "0")
+          fi
+
+          INSTALL_START_TIME=$(date +%s)
+          case $PACKAGE_MANAGER in
+            "yarn") yarn install --frozen-lockfile ;;
+            "pnpm") pnpm install --frozen-lockfile ;;
+            *) npm ci ;;
+          esac
+          INSTALL_END_TIME=$(date +%s)
+          INSTALL_TIME=$((INSTALL_END_TIME - INSTALL_START_TIME))
+
+          BUILD_START_TIME=$(date +%s)
+          if jq -e '.scripts.build' package.json >/dev/null 2>&1; then
+            case $PACKAGE_MANAGER in
+              "yarn") yarn build ;;
+              "pnpm") pnpm run build ;;
+              *) npm run build ;;
+            esac
+          else
+            echo "No build script found, skipping build step"
+          fi
+          BUILD_END_TIME=$(date +%s)
+          BUILD_TIME=$((BUILD_END_TIME - BUILD_START_TIME))
+
+          TOTAL_END_TIME=$(date +%s)
+          TOTAL_TIME=$((TOTAL_END_TIME - TOTAL_START_TIME))
+
+          echo "clone_time=$CLONE_TIME" >> $GITHUB_OUTPUT
+          echo "install_time=$INSTALL_TIME" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+          echo "total_time=$TOTAL_TIME" >> $GITHUB_OUTPUT
+          echo "package_manager=$PACKAGE_MANAGER" >> $GITHUB_OUTPUT
+          echo "dependencies_count=$DEPENDENCIES_COUNT" >> $GITHUB_OUTPUT
+
+          echo "### Node.js Build Performance Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** ${{ steps.clone_timing.outputs.nodejs_repo }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package Manager:** $PACKAGE_MANAGER" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dependencies Count:** $DEPENDENCIES_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- **Clone time:** ${CLONE_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Install time:** ${INSTALL_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build time:** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          cd ..
+
+  go_build_test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: system_info
+    outputs:
+      clone_time: ${{ steps.timing.outputs.clone_time }}
+      build_time: ${{ steps.timing.outputs.build_time }}
+      total_time: ${{ steps.timing.outputs.total_time }}
+      build_method: ${{ steps.timing.outputs.build_method }}
+      go_version: ${{ steps.timing.outputs.go_version }}
+      go_repo: ${{ steps.clone_timing.outputs.go_repo }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          AZURE_VM_SKU=""
+          AZURE_REGION=""
+
+          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
+            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
+            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          fi
+
+          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Clone and measure build performance
+        id: clone_timing
+        run: |
+          GO_REPO="${{ github.event.inputs.go_repo || 'kubernetes/kubernetes' }}"
+          REPO_NAME=$(echo "$GO_REPO" | cut -d'/' -f2)
+
+          echo "go_repo=$GO_REPO" >> $GITHUB_OUTPUT
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+
+          echo "### Go Build Performance Test (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** $GO_REPO" >> $GITHUB_STEP_SUMMARY
+
+      - name: Time Go build operations
+        id: timing
+        run: |
+          GO_REPO="${{ github.event.inputs.go_repo || 'kubernetes/kubernetes' }}"
+          REPO_NAME=$(echo "$GO_REPO" | cut -d'/' -f2)
+
+          GO_VERSION=$(go version | awk '{print $3}')
+          echo "go_version=$GO_VERSION" >> $GITHUB_OUTPUT
+
+          TOTAL_START=$(date +%s.%N)
+
+          CLONE_START=$(date +%s.%N)
+          git clone --depth=1 https://github.com/$GO_REPO.git $REPO_NAME
+          CLONE_END=$(date +%s.%N)
+          CLONE_TIME=$(echo "$CLONE_END - $CLONE_START" | bc -l | awk '{printf "%.2f", $1}')
+          echo "clone_time=$CLONE_TIME" >> $GITHUB_OUTPUT
+
+          cd $REPO_NAME
+
+          if [[ -f "Makefile" ]]; then
+            BUILD_METHOD="make"
+            BUILD_START=$(date +%s.%N)
+            make || { BUILD_METHOD="go build (make failed)"; go build ./... 2>/dev/null || true; }
+            BUILD_END=$(date +%s.%N)
+          elif [[ -f "go.mod" ]]; then
+            BUILD_METHOD="go build"
+            BUILD_START=$(date +%s.%N)
+            go build ./... 2>/dev/null || go build -v ./cmd/... 2>/dev/null || go build -v . 2>/dev/null || true
+            BUILD_END=$(date +%s.%N)
+          else
+            BUILD_METHOD="go build (basic)"
+            BUILD_START=$(date +%s.%N)
+            go build -v . 2>/dev/null || true
+            BUILD_END=$(date +%s.%N)
+          fi
+
+          BUILD_TIME=$(echo "$BUILD_END - $BUILD_START" | bc -l | awk '{printf "%.2f", $1}')
+          echo "build_method=$BUILD_METHOD" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+
+          TOTAL_END=$(date +%s.%N)
+          TOTAL_TIME=$(echo "$TOTAL_END - $TOTAL_START" | bc -l | awk '{printf "%.2f", $1}')
+          echo "total_time=$TOTAL_TIME" >> $GITHUB_OUTPUT
+
+          echo "- **Go version:** $GO_VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Clone time:** ${CLONE_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build method:** $BUILD_METHOD" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build time:** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          cd ..
+
+  performance_summary:
+    runs-on: ubuntu-latest
+    needs: [system_info, single_core_cpu, multi_core_cpu, memory_test, fio_disk_test, artifact_upload_test, artifact_download_test, cache_upload_test, cache_download_test, checkout_performance_test, docker_build_test, docker_build_test_cached, finish-queue-test, network_bandwidth_test, rsync_performance_test, apt_package_install_test, nodejs_build_test, go_build_test]
+    if: always()
+    steps:
+      - name: Generate performance summary
+        run: |
+          echo "# 🚀 Runner Performance Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Date:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Duration:** ${{ env.TEST_DURATION }} seconds per test" >> $GITHUB_STEP_SUMMARY
+          echo "**Runners tested:** ubuntu-latest" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## 📊 Performance Results" >> $GITHUB_STEP_SUMMARY
+          echo "> Results for each test appear above in the individual job summaries, broken down per runner." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### ✅ Job Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Test | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| System Info | ${{ needs.system_info.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Single-Core CPU | ${{ needs.single_core_cpu.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Multi-Core CPU | ${{ needs.multi_core_cpu.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Memory | ${{ needs.memory_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| FIO Disk | ${{ needs.fio_disk_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact Upload | ${{ needs.artifact_upload_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact Download | ${{ needs.artifact_download_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cache Save | ${{ needs.cache_upload_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cache Restore | ${{ needs.cache_download_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Checkout | ${{ needs.checkout_performance_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build | ${{ needs.docker_build_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build (Cached) | ${{ needs.docker_build_test_cached.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Queue Test | ${{ needs.finish-queue-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Network Bandwidth | ${{ needs.network_bandwidth_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rsync | ${{ needs.rsync_performance_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| APT Install | ${{ needs.apt_package_install_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js Build | ${{ needs.nodejs_build_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Go Build | ${{ needs.go_build_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Generated by GitHub Actions Performance Testing Workflow*" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create performance report artifact
+        run: |
+          mkdir -p performance-report
+
+          cat > performance-report/summary.json << EOF
+          {
+            "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "runners_tested": ["ubuntu-latest"],
+            "inputs": {
+              "file_size": "${{ github.event.inputs.file_size || '2' }}",
+              "docker_repo": "${{ github.event.inputs.docker_repo || 'mastodon/mastodon' }}",
+              "checkout_repo": "${{ github.event.inputs.checkout_repo || 'torvalds/linux' }}",
+              "matrix_size": "${{ github.event.inputs.matrix_size || '10' }}",
+              "sync_subtree": "${{ github.event.inputs.sync_subtree || '/usr' }}",
+              "sample_percentage": "${{ github.event.inputs.sample_percentage || '3' }}",
+              "apt_package": "${{ github.event.inputs.apt_package || 'texlive-full' }}",
+              "nodejs_repo": "${{ github.event.inputs.nodejs_repo || 'microsoft/monaco-editor' }}",
+              "go_repo": "${{ github.event.inputs.go_repo || 'kubernetes/kubernetes' }}"
+            },
+            "job_results": {
+              "system_info": "${{ needs.system_info.result }}",
+              "single_core_cpu": "${{ needs.single_core_cpu.result }}",
+              "multi_core_cpu": "${{ needs.multi_core_cpu.result }}",
+              "memory_test": "${{ needs.memory_test.result }}",
+              "fio_disk_test": "${{ needs.fio_disk_test.result }}",
+              "artifact_upload_test": "${{ needs.artifact_upload_test.result }}",
+              "artifact_download_test": "${{ needs.artifact_download_test.result }}",
+              "cache_upload_test": "${{ needs.cache_upload_test.result }}",
+              "cache_download_test": "${{ needs.cache_download_test.result }}",
+              "checkout_performance_test": "${{ needs.checkout_performance_test.result }}",
+              "docker_build_test": "${{ needs.docker_build_test.result }}",
+              "docker_build_test_cached": "${{ needs.docker_build_test_cached.result }}",
+              "finish_queue_test": "${{ needs.finish-queue-test.result }}",
+              "network_bandwidth_test": "${{ needs.network_bandwidth_test.result }}",
+              "rsync_performance_test": "${{ needs.rsync_performance_test.result }}",
+              "apt_package_install_test": "${{ needs.apt_package_install_test.result }}",
+              "nodejs_build_test": "${{ needs.nodejs_build_test.result }}",
+              "go_build_test": "${{ needs.go_build_test.result }}"
+            }
+          }
+          EOF
+
+      - name: Upload performance summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-summary
+          path: performance-report/
