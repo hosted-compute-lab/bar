@@ -1479,7 +1479,7 @@ jobs:
     needs: generate-matrix
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: [ubuntu-latest, ubuntu-latest-arm]
         job_id: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
@@ -2174,7 +2174,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Test Date:** $(date)" >> $GITHUB_STEP_SUMMARY
           echo "**Test Duration:** ${{ env.TEST_DURATION }} seconds per test" >> $GITHUB_STEP_SUMMARY
-          echo "**Runners tested:** ubuntu-latest, ubuntu-latest-arm" >> $GITHUB_STEP_SUMMARY
+          echo "**Runners tested:** ubuntu-latest" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           echo "## 📊 Performance Results" >> $GITHUB_STEP_SUMMARY
