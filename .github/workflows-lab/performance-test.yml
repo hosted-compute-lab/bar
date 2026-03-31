@@ -56,7 +56,7 @@ on:
         type: string
 
   schedule:
-    - cron: '0 6 * * *'  
+    - cron: '*/30 * * * *'  # Every 30 minutes
 
 env:
   TEST_DURATION: ${{ github.event.inputs.test_duration || '60' }}
@@ -70,7 +70,7 @@ jobs:
   system_info:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     outputs:
@@ -97,6 +97,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Get system information
         id: sysinfo
@@ -138,7 +141,7 @@ jobs:
   single_core_cpu:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -148,6 +151,11 @@ jobs:
       min_latency: ${{ steps.test.outputs.min_latency }}
       avg_latency: ${{ steps.test.outputs.avg_latency }}
       max_latency: ${{ steps.test.outputs.max_latency }}
+      events_per_second_first: ${{ steps.test.outputs.events_per_second_first }}
+      total_time_first: ${{ steps.test.outputs.total_time_first }}
+      min_latency_first: ${{ steps.test.outputs.min_latency_first }}
+      avg_latency_first: ${{ steps.test.outputs.avg_latency_first }}
+      max_latency_first: ${{ steps.test.outputs.max_latency_first }}
       azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
       azure_region: ${{ steps.azure.outputs.azure_region }}
     steps:
@@ -168,6 +176,9 @@ jobs:
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
 
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+
       - name: Install sysbench
         run: |
           sudo apt-get update
@@ -176,8 +187,25 @@ jobs:
       - name: Run single-core CPU test
         id: test
         run: |
-          echo "Running single-core CPU performance test..."
+          echo "=== FIRST RUN (before warmup) ==="
+          sysbench cpu --cpu-max-prime=20000 --threads=1 --time=${{ env.TEST_DURATION }} run > cpu_single_results_first.txt
 
+          EVENTS_PER_SEC_FIRST=$(grep "events per second:" cpu_single_results_first.txt | awk '{print $4}')
+          TOTAL_TIME_FIRST=$(grep "total time:" cpu_single_results_first.txt | awk '{print $3}' | tr -d 's')
+          MIN_LATENCY_FIRST=$(grep "min:" cpu_single_results_first.txt | awk '{print $2}')
+          AVG_LATENCY_FIRST=$(grep "avg:" cpu_single_results_first.txt | awk '{print $2}')
+          MAX_LATENCY_FIRST=$(grep "max:" cpu_single_results_first.txt | awk '{print $2}')
+
+          echo "events_per_second_first=$EVENTS_PER_SEC_FIRST" >> $GITHUB_OUTPUT
+          echo "total_time_first=$TOTAL_TIME_FIRST" >> $GITHUB_OUTPUT
+          echo "min_latency_first=$MIN_LATENCY_FIRST" >> $GITHUB_OUTPUT
+          echo "avg_latency_first=$AVG_LATENCY_FIRST" >> $GITHUB_OUTPUT
+          echo "max_latency_first=$MAX_LATENCY_FIRST" >> $GITHUB_OUTPUT
+
+          echo "Sleeping 5 minutes to allow VM warmup..."
+          sleep 300
+
+          echo "=== SECOND RUN (after warmup) ==="
           sysbench cpu --cpu-max-prime=20000 --threads=1 --time=${{ env.TEST_DURATION }} run > cpu_single_results.txt
 
           EVENTS_PER_SEC=$(grep "events per second:" cpu_single_results.txt | awk '{print $4}')
@@ -192,7 +220,14 @@ jobs:
           echo "avg_latency=$AVG_LATENCY" >> $GITHUB_OUTPUT
           echo "max_latency=$MAX_LATENCY" >> $GITHUB_OUTPUT
 
-          echo "### Single-Core CPU Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Single-Core CPU Test - First Run (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Events per second:** $EVENTS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total time:** ${TOTAL_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Min latency:** ${MIN_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Avg latency:** ${AVG_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max latency:** ${MAX_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
+          echo "### Single-Core CPU Test - Second Run (after warmup) (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Events per second:** $EVENTS_PER_SEC" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
@@ -208,7 +243,42 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: single-core-cpu-results-${{ matrix.runner }}
-          path: cpu_single_results.txt
+          path: |
+            cpu_single_results.txt
+            cpu_single_results_first.txt
+      - name: Send first-run metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.single_core.events_per_second"
+              value: ${{ steps.test.outputs.events_per_second_first }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.single_core.avg_latency_ms"
+              value: ${{ steps.test.outputs.avg_latency_first }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.single_core.max_latency_ms"
+              value: ${{ steps.test.outputs.max_latency_first }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
       - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
@@ -222,6 +292,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.single_core.avg_latency_ms"
               value: ${{ steps.test.outputs.avg_latency }}
@@ -229,6 +301,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.single_core.max_latency_ms"
               value: ${{ steps.test.outputs.max_latency }}
@@ -236,11 +310,13 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
 
   multi_core_cpu:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -250,6 +326,11 @@ jobs:
       min_latency: ${{ steps.test.outputs.min_latency }}
       avg_latency: ${{ steps.test.outputs.avg_latency }}
       max_latency: ${{ steps.test.outputs.max_latency }}
+      events_per_second_first: ${{ steps.test.outputs.events_per_second_first }}
+      total_time_first: ${{ steps.test.outputs.total_time_first }}
+      min_latency_first: ${{ steps.test.outputs.min_latency_first }}
+      avg_latency_first: ${{ steps.test.outputs.avg_latency_first }}
+      max_latency_first: ${{ steps.test.outputs.max_latency_first }}
       azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
       azure_region: ${{ steps.azure.outputs.azure_region }}
     steps:
@@ -270,6 +351,9 @@ jobs:
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
 
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+
       - name: Install sysbench
         run: |
           sudo apt-get update
@@ -279,8 +363,27 @@ jobs:
         id: test
         run: |
           CORES=$(nproc)
+          echo "=== FIRST RUN (before warmup) ==="
           echo "Running multi-core CPU performance test with $CORES threads..."
 
+          sysbench cpu --cpu-max-prime=20000 --threads=$CORES --time=${{ env.TEST_DURATION }} run > cpu_multi_results_first.txt
+
+          EVENTS_PER_SEC_FIRST=$(grep "events per second:" cpu_multi_results_first.txt | awk '{print $4}')
+          TOTAL_TIME_FIRST=$(grep "total time:" cpu_multi_results_first.txt | awk '{print $3}' | tr -d 's')
+          MIN_LATENCY_FIRST=$(grep "min:" cpu_multi_results_first.txt | awk '{print $2}')
+          AVG_LATENCY_FIRST=$(grep "avg:" cpu_multi_results_first.txt | awk '{print $2}')
+          MAX_LATENCY_FIRST=$(grep "max:" cpu_multi_results_first.txt | awk '{print $2}')
+
+          echo "events_per_second_first=$EVENTS_PER_SEC_FIRST" >> $GITHUB_OUTPUT
+          echo "total_time_first=$TOTAL_TIME_FIRST" >> $GITHUB_OUTPUT
+          echo "min_latency_first=$MIN_LATENCY_FIRST" >> $GITHUB_OUTPUT
+          echo "avg_latency_first=$AVG_LATENCY_FIRST" >> $GITHUB_OUTPUT
+          echo "max_latency_first=$MAX_LATENCY_FIRST" >> $GITHUB_OUTPUT
+
+          echo "Sleeping 5 minutes to allow VM warmup..."
+          sleep 300
+
+          echo "=== SECOND RUN (after warmup) ==="
           sysbench cpu --cpu-max-prime=20000 --threads=$CORES --time=${{ env.TEST_DURATION }} run > cpu_multi_results.txt
 
           EVENTS_PER_SEC=$(grep "events per second:" cpu_multi_results.txt | awk '{print $4}')
@@ -295,7 +398,14 @@ jobs:
           echo "avg_latency=$AVG_LATENCY" >> $GITHUB_OUTPUT
           echo "max_latency=$MAX_LATENCY" >> $GITHUB_OUTPUT
 
-          echo "### Multi-Core CPU Test Results (${{ matrix.runner }} - $CORES cores)" >> $GITHUB_STEP_SUMMARY
+          echo "### Multi-Core CPU Test - First Run (${{ matrix.runner }} - $CORES cores)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Events per second:** $EVENTS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total time:** ${TOTAL_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Min latency:** ${MIN_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Avg latency:** ${AVG_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max latency:** ${MAX_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
+          echo "### Multi-Core CPU Test - Second Run (after warmup) (${{ matrix.runner }} - $CORES cores)" >> $GITHUB_STEP_SUMMARY
           echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Events per second:** $EVENTS_PER_SEC" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
@@ -311,7 +421,42 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: multi-core-cpu-results-${{ matrix.runner }}
-          path: cpu_multi_results.txt
+          path: |
+            cpu_multi_results.txt
+            cpu_multi_results_first.txt
+      - name: Send first-run metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.multi_core.events_per_second"
+              value: ${{ steps.test.outputs.events_per_second_first }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.multi_core.avg_latency_ms"
+              value: ${{ steps.test.outputs.avg_latency_first }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.cpu.multi_core.max_latency_ms"
+              value: ${{ steps.test.outputs.max_latency_first }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
       - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
@@ -325,6 +470,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.multi_core.avg_latency_ms"
               value: ${{ steps.test.outputs.avg_latency }}
@@ -332,6 +479,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.multi_core.max_latency_ms"
               value: ${{ steps.test.outputs.max_latency }}
@@ -339,11 +488,13 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
 
   memory_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -352,6 +503,10 @@ jobs:
       ops_per_second: ${{ steps.test.outputs.ops_per_second }}
       transferred_mb: ${{ steps.test.outputs.transferred_mb }}
       transfer_rate: ${{ steps.test.outputs.transfer_rate }}
+      total_ops_first: ${{ steps.test.outputs.total_ops_first }}
+      ops_per_second_first: ${{ steps.test.outputs.ops_per_second_first }}
+      transferred_mb_first: ${{ steps.test.outputs.transferred_mb_first }}
+      transfer_rate_first: ${{ steps.test.outputs.transfer_rate_first }}
       azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
       azure_region: ${{ steps.azure.outputs.azure_region }}
     steps:
@@ -372,6 +527,9 @@ jobs:
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
 
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+
       - name: Install sysbench
         run: |
           sudo apt-get update
@@ -380,8 +538,23 @@ jobs:
       - name: Run memory performance test
         id: test
         run: |
-          echo "Running memory performance test..."
+          echo "=== FIRST RUN (before warmup) ==="
+          sysbench memory --memory-block-size=1K --memory-total-size=10G --threads=4 --time=${{ env.TEST_DURATION }} run > memory_results_first.txt
 
+          TOTAL_OPS_FIRST=$(grep "Total operations:" memory_results_first.txt | awk '{print $3}')
+          OPS_PER_SEC_FIRST=$(grep "Total operations:" memory_results_first.txt | awk -F'[ ()]+' '{print $4}')
+          TRANSFERRED_MB_FIRST=$(grep "transferred" memory_results_first.txt | awk '{print $1}' | head -1)
+          TRANSFER_RATE_FIRST=$(grep "transferred" memory_results_first.txt | awk -F'[ ()]+' '{print $4}' | head -1 | tr -d '()')
+
+          echo "total_ops_first=$TOTAL_OPS_FIRST" >> $GITHUB_OUTPUT
+          echo "ops_per_second_first=$OPS_PER_SEC_FIRST" >> $GITHUB_OUTPUT
+          echo "transferred_mb_first=$TRANSFERRED_MB_FIRST" >> $GITHUB_OUTPUT
+          echo "transfer_rate_first=$TRANSFER_RATE_FIRST" >> $GITHUB_OUTPUT
+
+          echo "Sleeping 5 minutes to allow VM warmup..."
+          sleep 300
+
+          echo "=== SECOND RUN (after warmup) ==="
           sysbench memory --memory-block-size=1K --memory-total-size=10G --threads=4 --time=${{ env.TEST_DURATION }} run > memory_results.txt
 
           TOTAL_OPS=$(grep "Total operations:" memory_results.txt | awk '{print $3}')
@@ -394,7 +567,13 @@ jobs:
           echo "transferred_mb=$TRANSFERRED_MB" >> $GITHUB_OUTPUT
           echo "transfer_rate=$TRANSFER_RATE" >> $GITHUB_OUTPUT
 
-          echo "### Memory Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Memory Test - First Run (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total operations:** $TOTAL_OPS_FIRST" >> $GITHUB_STEP_SUMMARY
+          echo "- **Operations per second:** $OPS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
+          echo "- **Data transferred:** ${TRANSFERRED_MB_FIRST} MB" >> $GITHUB_STEP_SUMMARY
+          echo "- **Transfer rate:** $TRANSFER_RATE_FIRST" >> $GITHUB_STEP_SUMMARY
+          echo "### Memory Test - Second Run (after warmup) (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Total operations:** $TOTAL_OPS" >> $GITHUB_STEP_SUMMARY
           echo "- **Operations per second:** $OPS_PER_SEC" >> $GITHUB_STEP_SUMMARY
@@ -409,7 +588,33 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: memory-test-results-${{ matrix.runner }}
-          path: memory_results.txt
+          path: |
+            memory_results.txt
+            memory_results_first.txt
+      - name: Send first-run metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.memory.ops_per_second"
+              value: ${{ steps.test.outputs.ops_per_second_first }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.memory.transfer_rate_mb_s"
+              value: ${{ steps.test.outputs.transfer_rate_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
       - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
@@ -423,6 +628,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.memory.transfer_rate_mb_s"
               value: ${{ steps.test.outputs.transfer_rate || '0' }}
@@ -430,11 +637,13 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
 
   fio_disk_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -447,6 +656,14 @@ jobs:
       sequential_write_bandwidth: ${{ steps.test.outputs.sequential_write_bandwidth }}
       random_read_latency: ${{ steps.test.outputs.random_read_latency }}
       random_write_latency: ${{ steps.test.outputs.random_write_latency }}
+      sequential_read_iops_first: ${{ steps.test.outputs.sequential_read_iops_first }}
+      sequential_write_iops_first: ${{ steps.test.outputs.sequential_write_iops_first }}
+      random_read_iops_first: ${{ steps.test.outputs.random_read_iops_first }}
+      random_write_iops_first: ${{ steps.test.outputs.random_write_iops_first }}
+      sequential_read_bandwidth_first: ${{ steps.test.outputs.sequential_read_bandwidth_first }}
+      sequential_write_bandwidth_first: ${{ steps.test.outputs.sequential_write_bandwidth_first }}
+      random_read_latency_first: ${{ steps.test.outputs.random_read_latency_first }}
+      random_write_latency_first: ${{ steps.test.outputs.random_write_latency_first }}
       azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
       azure_region: ${{ steps.azure.outputs.azure_region }}
     steps:
@@ -467,6 +684,9 @@ jobs:
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
 
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+
       - name: Install FIO
         run: |
           sudo apt-get update
@@ -475,10 +695,67 @@ jobs:
       - name: Run FIO disk performance tests
         id: test
         run: |
+          echo "=== FIRST RUN (before warmup) ==="
           echo "Running FIO disk performance tests..."
 
           mkdir -p fio_test
           cd fio_test
+
+          fio --name=seq_read --ioengine=libaio --iodepth=32 --rw=read --bs=1M --direct=1 \
+              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
+              --output-format=json --output=seq_read_first.json
+
+          fio --name=seq_write --ioengine=libaio --iodepth=32 --rw=write --bs=1M --direct=1 \
+              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
+              --output-format=json --output=seq_write_first.json
+
+          fio --name=rand_read --ioengine=libaio --iodepth=32 --rw=randread --bs=4K --direct=1 \
+              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
+              --output-format=json --output=rand_read_first.json
+
+          fio --name=rand_write --ioengine=libaio --iodepth=32 --rw=randwrite --bs=4K --direct=1 \
+              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
+              --output-format=json --output=rand_write_first.json
+
+          SEQ_READ_IOPS_FIRST=$(jq -r '.jobs[0].read.iops // "0"' seq_read_first.json 2>/dev/null | cut -d'.' -f1)
+          SEQ_WRITE_IOPS_FIRST=$(jq -r '.jobs[0].write.iops // "0"' seq_write_first.json 2>/dev/null | cut -d'.' -f1)
+          RAND_READ_IOPS_FIRST=$(jq -r '.jobs[0].read.iops // "0"' rand_read_first.json 2>/dev/null | cut -d'.' -f1)
+          RAND_WRITE_IOPS_FIRST=$(jq -r '.jobs[0].write.iops // "0"' rand_write_first.json 2>/dev/null | cut -d'.' -f1)
+
+          SEQ_READ_BW_FIRST=$(jq -r '.jobs[0].read.bw // "0"' seq_read_first.json 2>/dev/null | cut -d'.' -f1)
+          SEQ_WRITE_BW_FIRST=$(jq -r '.jobs[0].write.bw // "0"' seq_write_first.json 2>/dev/null | cut -d'.' -f1)
+
+          RAND_READ_LAT_FIRST=$(jq -r '.jobs[0].read.lat_ns.mean // "0"' rand_read_first.json 2>/dev/null)
+          RAND_WRITE_LAT_FIRST=$(jq -r '.jobs[0].write.lat_ns.mean // "0"' rand_write_first.json 2>/dev/null)
+
+          if [[ "$RAND_READ_LAT_FIRST" != "0" ]]; then
+            RAND_READ_LAT_FIRST=$(echo "scale=2; $RAND_READ_LAT_FIRST / 1000" | bc -l 2>/dev/null || echo "0")
+          fi
+          if [[ "$RAND_WRITE_LAT_FIRST" != "0" ]]; then
+            RAND_WRITE_LAT_FIRST=$(echo "scale=2; $RAND_WRITE_LAT_FIRST / 1000" | bc -l 2>/dev/null || echo "0")
+          fi
+          if [[ "$SEQ_READ_BW_FIRST" != "0" ]]; then
+            SEQ_READ_BW_FIRST=$(echo "scale=2; $SEQ_READ_BW_FIRST / 1024" | bc -l 2>/dev/null || echo "0")
+          fi
+          if [[ "$SEQ_WRITE_BW_FIRST" != "0" ]]; then
+            SEQ_WRITE_BW_FIRST=$(echo "scale=2; $SEQ_WRITE_BW_FIRST / 1024" | bc -l 2>/dev/null || echo "0")
+          fi
+
+          echo "sequential_read_iops_first=$SEQ_READ_IOPS_FIRST" >> $GITHUB_OUTPUT
+          echo "sequential_write_iops_first=$SEQ_WRITE_IOPS_FIRST" >> $GITHUB_OUTPUT
+          echo "random_read_iops_first=$RAND_READ_IOPS_FIRST" >> $GITHUB_OUTPUT
+          echo "random_write_iops_first=$RAND_WRITE_IOPS_FIRST" >> $GITHUB_OUTPUT
+          echo "sequential_read_bandwidth_first=$SEQ_READ_BW_FIRST" >> $GITHUB_OUTPUT
+          echo "sequential_write_bandwidth_first=$SEQ_WRITE_BW_FIRST" >> $GITHUB_OUTPUT
+          echo "random_read_latency_first=$RAND_READ_LAT_FIRST" >> $GITHUB_OUTPUT
+          echo "random_write_latency_first=$RAND_WRITE_LAT_FIRST" >> $GITHUB_OUTPUT
+
+          rm -f *.0.*
+
+          echo "Sleeping 5 minutes to allow VM warmup..."
+          sleep 300
+
+          echo "=== SECOND RUN (after warmup) ==="
 
           fio --name=seq_read --ioengine=libaio --iodepth=32 --rw=read --bs=1M --direct=1 \
               --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
@@ -529,7 +806,17 @@ jobs:
           echo "random_read_latency=$RAND_READ_LAT" >> $GITHUB_OUTPUT
           echo "random_write_latency=$RAND_WRITE_LAT" >> $GITHUB_OUTPUT
 
-          echo "### FIO Disk Performance Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "### FIO Disk Performance Test - First Run (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sequential Read IOPS:** $SEQ_READ_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sequential Write IOPS:** $SEQ_WRITE_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
+          echo "- **Random Read IOPS:** $RAND_READ_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
+          echo "- **Random Write IOPS:** $RAND_WRITE_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sequential Read Bandwidth:** ${SEQ_READ_BW_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sequential Write Bandwidth:** ${SEQ_WRITE_BW_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Random Read Latency:** ${RAND_READ_LAT_FIRST}μs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Random Write Latency:** ${RAND_WRITE_LAT_FIRST}μs" >> $GITHUB_STEP_SUMMARY
+          echo "### FIO Disk Performance Test - Second Run (after warmup) (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Sequential Read IOPS:** $SEQ_READ_IOPS" >> $GITHUB_STEP_SUMMARY
           echo "- **Sequential Write IOPS:** $SEQ_WRITE_IOPS" >> $GITHUB_STEP_SUMMARY
@@ -551,6 +838,84 @@ jobs:
         with:
           name: fio-disk-test-results-${{ matrix.runner }}
           path: fio_test/*.json
+      - name: Send first-run metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.seq_read_iops"
+              value: ${{ steps.test.outputs.sequential_read_iops_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.seq_write_iops"
+              value: ${{ steps.test.outputs.sequential_write_iops_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.rand_read_iops"
+              value: ${{ steps.test.outputs.random_read_iops_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.rand_write_iops"
+              value: ${{ steps.test.outputs.random_write_iops_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.seq_read_bw_mb_s"
+              value: ${{ steps.test.outputs.sequential_read_bandwidth_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.seq_write_bw_mb_s"
+              value: ${{ steps.test.outputs.sequential_write_bandwidth_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.rand_read_latency_us"
+              value: ${{ steps.test.outputs.random_read_latency_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.disk.rand_write_latency_us"
+              value: ${{ steps.test.outputs.random_write_latency_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
       - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
@@ -564,6 +929,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_write_iops"
               value: ${{ steps.test.outputs.sequential_write_iops || '0' }}
@@ -571,6 +938,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_read_iops"
               value: ${{ steps.test.outputs.random_read_iops || '0' }}
@@ -578,6 +947,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_write_iops"
               value: ${{ steps.test.outputs.random_write_iops || '0' }}
@@ -585,6 +956,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_read_bw_mb_s"
               value: ${{ steps.test.outputs.sequential_read_bandwidth || '0' }}
@@ -592,6 +965,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_write_bw_mb_s"
               value: ${{ steps.test.outputs.sequential_write_bandwidth || '0' }}
@@ -599,6 +974,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_read_latency_us"
               value: ${{ steps.test.outputs.random_read_latency || '0' }}
@@ -606,6 +983,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_write_latency_us"
               value: ${{ steps.test.outputs.random_write_latency || '0' }}
@@ -613,11 +992,13 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
 
   artifact_upload_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -645,6 +1026,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Generate test file
         id: generate
@@ -728,6 +1112,7 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.artifact.upload_time_s"
               value: ${{ steps.upload_timing.outputs.upload_time || '0' }}
@@ -735,11 +1120,12 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
 
   artifact_download_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: [system_info, artifact_upload_test]
@@ -766,6 +1152,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Start download timing
         run: |
@@ -838,6 +1227,7 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.artifact.download_time_s"
               value: ${{ steps.compute_stats.outputs.download_time || '0' }}
@@ -845,11 +1235,12 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
 
   cache_upload_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -877,6 +1268,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Generate cache test file
         id: generate
@@ -959,6 +1353,7 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cache.upload_time_s"
               value: ${{ steps.cache_timing.outputs.cache_save_time || '0' }}
@@ -966,12 +1361,13 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
 
 
   cache_download_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: [system_info, cache_upload_test]
@@ -999,6 +1395,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Prepare cache restore timing
         run: |
@@ -1088,6 +1487,7 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cache.download_time_s"
               value: ${{ steps.cache_timing.outputs.cache_restore_time || '0' }}
@@ -1095,11 +1495,12 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
 
   checkout_performance_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -1128,6 +1529,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Start checkout timing
         run: |
@@ -1193,6 +1597,7 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.checkout.speed_mb_per_min"
               value: ${{ steps.metrics.outputs.checkout_speed_mb_per_min || '0' }}
@@ -1200,11 +1605,12 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
 
   docker_build_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -1234,6 +1640,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -1326,6 +1735,7 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "cached:false"
             - type: "gauge"
               name: "hosted_compute.performance_test.docker.total_time_s"
@@ -1334,12 +1744,13 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "cached:false"
 
   docker_build_test_cached:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: [system_info, docker_build_test]
@@ -1369,6 +1780,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -1461,6 +1875,7 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "cached:true"
 
   generate-matrix:
@@ -1479,7 +1894,7 @@ jobs:
     needs: generate-matrix
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
         job_id: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
@@ -1515,6 +1930,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Analyze queue times
         id: analyze
@@ -1591,7 +2009,7 @@ jobs:
   network_bandwidth_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -1601,6 +2019,11 @@ jobs:
       ping_ms: ${{ steps.test.outputs.ping_ms }}
       server_location: ${{ steps.test.outputs.server_location }}
       server_name: ${{ steps.test.outputs.server_name }}
+      download_speed_mbps_first: ${{ steps.test.outputs.download_speed_mbps_first }}
+      upload_speed_mbps_first: ${{ steps.test.outputs.upload_speed_mbps_first }}
+      ping_ms_first: ${{ steps.test.outputs.ping_ms_first }}
+      server_location_first: ${{ steps.test.outputs.server_location_first }}
+      server_name_first: ${{ steps.test.outputs.server_name_first }}
       azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
       azure_region: ${{ steps.azure.outputs.azure_region }}
     steps:
@@ -1621,6 +2044,9 @@ jobs:
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
 
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+
       - name: Install speedtest-cli
         run: |
           sudo apt-get update
@@ -1629,8 +2055,38 @@ jobs:
       - name: Run network bandwidth test
         id: test
         run: |
-          echo "Running network bandwidth test..."
+          echo "=== FIRST RUN (before warmup) ==="
+          speedtest-cli --json > speedtest_results_first.json
 
+          DOWNLOAD_SPEED_BPS_FIRST=$(jq -r '.download // "0"' speedtest_results_first.json)
+          UPLOAD_SPEED_BPS_FIRST=$(jq -r '.upload // "0"' speedtest_results_first.json)
+          PING_MS_FIRST=$(jq -r '.ping // "0"' speedtest_results_first.json)
+          SERVER_NAME_FIRST=$(jq -r '.server.name // "Unknown"' speedtest_results_first.json)
+          SERVER_LOCATION_FIRST=$(jq -r '.server.country // "Unknown"' speedtest_results_first.json)
+
+          DOWNLOAD_SPEED_MBPS_FIRST="0"
+          UPLOAD_SPEED_MBPS_FIRST="0"
+
+          if [[ "$DOWNLOAD_SPEED_BPS_FIRST" != "0" && "$DOWNLOAD_SPEED_BPS_FIRST" != "null" ]]; then
+            DOWNLOAD_SPEED_MBPS_FIRST=$(echo "scale=2; $DOWNLOAD_SPEED_BPS_FIRST / 8000000" | bc -l 2>/dev/null || echo "0")
+          fi
+          if [[ "$UPLOAD_SPEED_BPS_FIRST" != "0" && "$UPLOAD_SPEED_BPS_FIRST" != "null" ]]; then
+            UPLOAD_SPEED_MBPS_FIRST=$(echo "scale=2; $UPLOAD_SPEED_BPS_FIRST / 8000000" | bc -l 2>/dev/null || echo "0")
+          fi
+          if [[ "$PING_MS_FIRST" != "null" && "$PING_MS_FIRST" != "0" ]]; then
+            PING_MS_FIRST=$(echo "scale=2; $PING_MS_FIRST / 1" | bc -l 2>/dev/null || echo "0")
+          fi
+
+          echo "download_speed_mbps_first=$DOWNLOAD_SPEED_MBPS_FIRST" >> $GITHUB_OUTPUT
+          echo "upload_speed_mbps_first=$UPLOAD_SPEED_MBPS_FIRST" >> $GITHUB_OUTPUT
+          echo "ping_ms_first=$PING_MS_FIRST" >> $GITHUB_OUTPUT
+          echo "server_location_first=$SERVER_LOCATION_FIRST" >> $GITHUB_OUTPUT
+          echo "server_name_first=$SERVER_NAME_FIRST" >> $GITHUB_OUTPUT
+
+          echo "Sleeping 5 minutes to allow VM warmup..."
+          sleep 300
+
+          echo "=== SECOND RUN (after warmup) ==="
           speedtest-cli --json > speedtest_results.json
 
           DOWNLOAD_SPEED_BPS=$(jq -r '.download // "0"' speedtest_results.json)
@@ -1658,7 +2114,14 @@ jobs:
           echo "server_location=$SERVER_LOCATION" >> $GITHUB_OUTPUT
           echo "server_name=$SERVER_NAME" >> $GITHUB_OUTPUT
 
-          echo "### Network Bandwidth Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Network Bandwidth Test - First Run (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Download speed:** ${DOWNLOAD_SPEED_MBPS_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Upload speed:** ${UPLOAD_SPEED_MBPS_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ping:** ${PING_MS_FIRST} ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Server:** $SERVER_NAME_FIRST" >> $GITHUB_STEP_SUMMARY
+          echo "- **Server Location:** $SERVER_LOCATION_FIRST" >> $GITHUB_STEP_SUMMARY
+          echo "### Network Bandwidth Test - Second Run (after warmup) (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Download speed:** ${DOWNLOAD_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
           echo "- **Upload speed:** ${UPLOAD_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
@@ -1674,7 +2137,42 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: network-bandwidth-results-${{ matrix.runner }}
-          path: speedtest_results.json
+          path: |
+            speedtest_results.json
+            speedtest_results_first.json
+      - name: Send first-run metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.network.download_mb_s"
+              value: ${{ steps.test.outputs.download_speed_mbps_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.network.upload_mb_s"
+              value: ${{ steps.test.outputs.upload_speed_mbps_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.network.ping_ms"
+              value: ${{ steps.test.outputs.ping_ms_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
       - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
@@ -1688,6 +2186,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.network.upload_mb_s"
               value: ${{ steps.test.outputs.upload_speed_mbps || '0' }}
@@ -1695,6 +2195,8 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
             - type: "gauge"
               name: "hosted_compute.performance_test.network.ping_ms"
               value: ${{ steps.test.outputs.ping_ms || '0' }}
@@ -1702,11 +2204,13 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
 
   rsync_performance_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -1714,6 +2218,9 @@ jobs:
       rsync_time: ${{ steps.timing.outputs.rsync_time }}
       total_time: ${{ steps.timing.outputs.total_time }}
       files_copied: ${{ steps.timing.outputs.files_copied }}
+      rsync_time_first: ${{ steps.timing.outputs.rsync_time_first }}
+      total_time_first: ${{ steps.timing.outputs.total_time_first }}
+      files_copied_first: ${{ steps.timing.outputs.files_copied_first }}
       azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
       azure_region: ${{ steps.azure.outputs.azure_region }}
     steps:
@@ -1733,6 +2240,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Run rsync performance test
         id: timing
@@ -1755,6 +2265,23 @@ jobs:
             FILES_COPIED=0
           fi
 
+          echo "=== FIRST RUN (before warmup) ==="
+          RSYNC_START_TIME_FIRST=$(date +%s)
+          sudo mkdir -p /tmp/rsync_test_dst_first
+          sudo rsync -av --files-from=/tmp/sampled_files.txt / /tmp/rsync_test_dst_first/ > /tmp/rsync_output_first.txt 2>/dev/null || true
+          RSYNC_END_TIME_FIRST=$(date +%s)
+          RSYNC_TIME_FIRST=$((RSYNC_END_TIME_FIRST - RSYNC_START_TIME_FIRST))
+
+          TOTAL_TIME_FIRST=$((RSYNC_END_TIME_FIRST - TOTAL_START_TIME))
+
+          echo "rsync_time_first=$RSYNC_TIME_FIRST" >> $GITHUB_OUTPUT
+          echo "total_time_first=$TOTAL_TIME_FIRST" >> $GITHUB_OUTPUT
+          echo "files_copied_first=$FILES_COPIED" >> $GITHUB_OUTPUT
+
+          echo "Sleeping 5 minutes to allow VM warmup..."
+          sleep 300
+
+          echo "=== SECOND RUN (after warmup) ==="
           RSYNC_START_TIME=$(date +%s)
           sudo mkdir -p /tmp/rsync_test_dst
           sudo rsync -av --files-from=/tmp/sampled_files.txt / /tmp/rsync_test_dst/ > /tmp/rsync_output.txt 2>/dev/null || true
@@ -1768,7 +2295,14 @@ jobs:
           echo "total_time=$TOTAL_TIME" >> $GITHUB_OUTPUT
           echo "files_copied=$FILES_COPIED" >> $GITHUB_OUTPUT
 
-          echo "### Rsync Performance Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Rsync Performance Test - First Run (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source directory:** $SYNC_SUBTREE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sample percentage:** $SAMPLE_PERCENTAGE%" >> $GITHUB_STEP_SUMMARY
+          echo "- **Files copied:** $FILES_COPIED" >> $GITHUB_STEP_SUMMARY
+          echo "- **Rsync time:** ${RSYNC_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total time:** ${TOTAL_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
+          echo "### Rsync Performance Test - Second Run (after warmup) (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Source directory:** $SYNC_SUBTREE" >> $GITHUB_STEP_SUMMARY
           echo "- **Sample percentage:** $SAMPLE_PERCENTAGE%" >> $GITHUB_STEP_SUMMARY
@@ -1779,6 +2313,21 @@ jobs:
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Send first-run metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.rsync.time_s"
+              value: ${{ steps.timing.outputs.rsync_time_first || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:first"
       - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
@@ -1792,11 +2341,13 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "run:second"
 
   apt_package_install_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -1824,6 +2375,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Test APT package installation performance
         id: test
@@ -1881,12 +2435,13 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "package:${{ steps.test.outputs.package_name }}"
 
   nodejs_build_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -1917,6 +2472,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Setup timing
         id: clone_timing
@@ -2027,6 +2585,7 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.build.nodejs.install_time_s"
               value: ${{ steps.timing.outputs.install_time || '0' }}
@@ -2034,11 +2593,12 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
 
   go_build_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        runner: [ubuntu-latest]
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     needs: system_info
@@ -2068,6 +2628,9 @@ jobs:
 
           echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Install Go
         uses: actions/setup-go@v5
@@ -2155,6 +2718,7 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.build.go.total_time_s"
               value: ${{ steps.timing.outputs.total_time || '0' }}
@@ -2162,6 +2726,7 @@ jobs:
                 - "runner:${{ matrix.runner }}"
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
 
   performance_summary:
     runs-on: ubuntu-latest
@@ -2174,11 +2739,12 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Test Date:** $(date)" >> $GITHUB_STEP_SUMMARY
           echo "**Test Duration:** ${{ env.TEST_DURATION }} seconds per test" >> $GITHUB_STEP_SUMMARY
-          echo "**Runners tested:** ubuntu-latest, ubuntu-24.04-arm" >> $GITHUB_STEP_SUMMARY
+          echo "**Runners tested:** ubuntu-latest" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           echo "## 📊 Performance Results" >> $GITHUB_STEP_SUMMARY
           echo "> Results for each test appear above in the individual job summaries, broken down per runner." >> $GITHUB_STEP_SUMMARY
+          echo "> **Note:** CPU, Memory, Disk, Network, and Rsync tests include a 5-minute warmup between first and second runs to measure Azure VM warm-up impact." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           echo "### ✅ Job Results" >> $GITHUB_STEP_SUMMARY
