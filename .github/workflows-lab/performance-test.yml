@@ -56,7 +56,7 @@ on:
         type: string
 
   schedule:
-    - cron: '*/30 * * * *'  # Every 30 minutes
+    - cron: '*/5 * * * *'  # Every 30 minutes
 
 env:
   TEST_DURATION: ${{ github.event.inputs.test_duration || '60' }}
