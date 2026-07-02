@@ -13,7 +13,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-24.04-aws]
+        os: [ubuntu-24.04-aws, Ubuntu24-aws]
         b: [a, b, c]
     runs-on: ${{ matrix.os }}
 
