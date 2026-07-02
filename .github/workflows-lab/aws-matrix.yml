@@ -1,0 +1,27 @@
+# This is a basic workflow to help you get started with Actions
+
+name: AWS Matrix CI
+
+# Controls when the workflow will run
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04-aws]
+        b: [a, b, c]
+    runs-on: ${{ matrix.os }}
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Runs a single command using the runners shell
+      - name: Run a one-line script
+        run: echo This is ${{ matrix.b }}
+      
+      - name: Print working directory
+        run: pwd
