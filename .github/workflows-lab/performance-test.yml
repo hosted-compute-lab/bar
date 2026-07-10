@@ -159,7 +159,7 @@ jobs:
       - name: Upload hardware information
         uses: actions/upload-artifact@v4
         with:
-          name: hardware-info-${{ github.run_id }}-ubuntu-24.04-aws
+          name: hardware-info-${{ github.run_id }}-${{ matrix.runner }}
           path: hardware_info.json
 
   single_core_cpu:
@@ -233,22 +233,22 @@ jobs:
           echo "avg_latency_first=$AVG_LATENCY_FIRST" >> $GITHUB_OUTPUT
           echo "max_latency_first=$MAX_LATENCY_FIRST" >> $GITHUB_OUTPUT
 
-          echo "### Single-Core CPU Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Single-Core CPU Test (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Events per second:** $EVENTS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Min latency:** ${MIN_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
           echo "- **Avg latency:** ${AVG_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
           echo "- **Max latency:** ${MAX_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
-          fi
 
       - name: Upload single-core results
         uses: actions/upload-artifact@v4
         with:
-          name: single-core-cpu-results-ubuntu-24.04-aws
+          name: single-core-cpu-results-${{ matrix.runner }}
           path: |
             cpu_single_results_first.txt
       - name: Send metrics to Datadog
@@ -359,22 +359,22 @@ jobs:
           echo "avg_latency_first=$AVG_LATENCY_FIRST" >> $GITHUB_OUTPUT
           echo "max_latency_first=$MAX_LATENCY_FIRST" >> $GITHUB_OUTPUT
 
-          echo "### Multi-Core CPU Test (ubuntu-24.04-aws - $CORES cores)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Multi-Core CPU Test (${{ matrix.runner }} - $CORES cores)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Events per second:** $EVENTS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Min latency:** ${MIN_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
           echo "- **Avg latency:** ${AVG_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
           echo "- **Max latency:** ${MAX_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
-          fi
 
       - name: Upload multi-core results
         uses: actions/upload-artifact@v4
         with:
-          name: multi-core-cpu-results-ubuntu-24.04-aws
+          name: multi-core-cpu-results-${{ matrix.runner }}
           path: |
             cpu_multi_results_first.txt
       - name: Send metrics to Datadog
@@ -479,21 +479,21 @@ jobs:
           echo "transferred_mb_first=$TRANSFERRED_MB_FIRST" >> $GITHUB_OUTPUT
           echo "transfer_rate_first=$TRANSFER_RATE_FIRST" >> $GITHUB_OUTPUT
 
-          echo "### Memory Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Memory Test (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Total operations:** $TOTAL_OPS_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Operations per second:** $OPS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Data transferred:** ${TRANSFERRED_MB_FIRST} MB" >> $GITHUB_STEP_SUMMARY
           echo "- **Transfer rate:** $TRANSFER_RATE_FIRST" >> $GITHUB_STEP_SUMMARY
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
-          fi
 
       - name: Upload memory results
         uses: actions/upload-artifact@v4
         with:
-          name: memory-test-results-ubuntu-24.04-aws
+          name: memory-test-results-${{ matrix.runner }}
           path: |
             memory_results_first.txt
       - name: Send metrics to Datadog
@@ -637,8 +637,12 @@ jobs:
 
           rm -f *.0.*
 
-          echo "### FIO Disk Performance Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### FIO Disk Performance Test (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Sequential Read IOPS:** $SEQ_READ_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Sequential Write IOPS:** $SEQ_WRITE_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Random Read IOPS:** $RAND_READ_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
@@ -647,17 +651,13 @@ jobs:
           echo "- **Sequential Write Bandwidth:** ${SEQ_WRITE_BW_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
           echo "- **Random Read Latency:** ${RAND_READ_LAT_FIRST}μs" >> $GITHUB_STEP_SUMMARY
           echo "- **Random Write Latency:** ${RAND_WRITE_LAT_FIRST}μs" >> $GITHUB_STEP_SUMMARY
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
-          fi
 
           cd ..
 
       - name: Upload FIO results
         uses: actions/upload-artifact@v4
         with:
-          name: fio-disk-test-results-ubuntu-24.04-aws
+          name: fio-disk-test-results-${{ matrix.runner }}
           path: fio_test/*.json
       - name: Send metrics to Datadog
         if: always()
@@ -805,8 +805,12 @@ jobs:
           echo "file_generation_time=$FILE_GENERATION_TIME" >> $GITHUB_OUTPUT
           echo "file_size_mb=$FILE_SIZE_MB" >> $GITHUB_OUTPUT
 
-          echo "### File Generation Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### File Generation Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **File generation time:** ${FILE_GENERATION_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
 
@@ -815,7 +819,7 @@ jobs:
       - name: Upload test file
         uses: actions/upload-artifact@v4
         with:
-          name: test-data-${{ env.FILE_SIZE }}gb-ubuntu-24.04-aws
+          name: test-data-${{ env.FILE_SIZE }}gb-${{ matrix.runner }}
           path: test_data_${{ env.FILE_SIZE }}gb.bin
           retention-days: 1
           compression-level: 0
@@ -829,7 +833,7 @@ jobs:
 
           echo "upload_time=$UPLOAD_TIME" >> $GITHUB_OUTPUT
 
-          echo "### Upload Timing Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "### Upload Timing Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           echo "- **Upload time:** ${UPLOAD_TIME}s" >> $GITHUB_STEP_SUMMARY
 
       - name: Compute upload statistics
@@ -845,15 +849,11 @@ jobs:
 
           echo "upload_speed_mbps=$UPLOAD_SPEED_MBPS" >> $GITHUB_OUTPUT
 
-          echo "### Upload Statistics (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "### Upload Statistics (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           if [[ -n "$UPLOAD_SPEED_MBPS" ]]; then
             echo "- **Upload speed:** ${UPLOAD_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
           else
             echo "- **Upload speed:** Unable to calculate" >> $GITHUB_STEP_SUMMARY
-          fi
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
       - name: Send metrics to Datadog
         if: always()
@@ -935,7 +935,7 @@ jobs:
       - name: Download test file
         uses: actions/download-artifact@v4
         with:
-          name: test-data-${{ env.FILE_SIZE }}gb-ubuntu-24.04-aws
+          name: test-data-${{ env.FILE_SIZE }}gb-${{ matrix.runner }}
           path: downloaded/
 
       - name: Record download completion and verify file
@@ -970,8 +970,12 @@ jobs:
           echo "verification_time=$VERIFICATION_TIME" >> $GITHUB_OUTPUT
           echo "download_speed_mbps=$DOWNLOAD_SPEED_MBPS" >> $GITHUB_OUTPUT
 
-          echo "### Artifact Download Test Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifact Download Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Download time:** ${DOWNLOAD_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Verification time:** ${VERIFICATION_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
@@ -980,10 +984,6 @@ jobs:
             echo "- **Download speed:** ${DOWNLOAD_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
           else
             echo "- **Download speed:** Unable to calculate" >> $GITHUB_STEP_SUMMARY
-          fi
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
       - name: Send metrics to Datadog
         if: always()
@@ -1078,8 +1078,12 @@ jobs:
           echo "file_generation_time=$FILE_GENERATION_TIME" >> $GITHUB_OUTPUT
           echo "file_size_mb=$FILE_SIZE_MB" >> $GITHUB_OUTPUT
 
-          echo "### Cache File Generation Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache File Generation Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **File generation time:** ${FILE_GENERATION_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
 
@@ -1089,7 +1093,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: cache_test_data/
-          key: cache-perf-test-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu-24.04-aws
+          key: cache-perf-test-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}
 
       - name: Record cache save timing
         id: cache_timing
@@ -1100,7 +1104,7 @@ jobs:
 
           echo "cache_save_time=$CACHE_SAVE_TIME" >> $GITHUB_OUTPUT
 
-          echo "### Cache Save Timing Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache Save Timing Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           echo "- **Cache save time:** ${CACHE_SAVE_TIME}s" >> $GITHUB_STEP_SUMMARY
 
       - name: Compute cache save statistics
@@ -1116,15 +1120,11 @@ jobs:
 
           echo "cache_save_speed_mbps=$CACHE_SAVE_SPEED_MBPS" >> $GITHUB_OUTPUT
 
-          echo "### Cache Save Statistics (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache Save Statistics (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           if [[ -n "$CACHE_SAVE_SPEED_MBPS" ]]; then
             echo "- **Cache save speed:** ${CACHE_SAVE_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
           else
             echo "- **Cache save speed:** Unable to calculate" >> $GITHUB_STEP_SUMMARY
-          fi
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
       - name: Send metrics to Datadog
         if: always()
@@ -1209,7 +1209,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: cache_test_data/
-          key: cache-perf-test-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu-24.04-aws
+          key: cache-perf-test-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}
 
       - name: Record cache restore timing
         id: cache_timing
@@ -1220,8 +1220,12 @@ jobs:
 
           echo "cache_restore_time=$CACHE_RESTORE_TIME" >> $GITHUB_OUTPUT
 
-          echo "### Cache Restore Timing Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache Restore Timing Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Cache restore time:** ${CACHE_RESTORE_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Cache hit:** ${{ steps.cache_restore.outputs.cache-hit }}" >> $GITHUB_STEP_SUMMARY
 
@@ -1246,7 +1250,7 @@ jobs:
 
           echo "verification_time=$VERIFICATION_TIME" >> $GITHUB_OUTPUT
 
-          echo "### Cache Verification Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache Verification Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           echo "- **Verification time:** ${VERIFICATION_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
           echo "- **Verification status:** $VERIFY_STATUS" >> $GITHUB_STEP_SUMMARY
@@ -1265,15 +1269,11 @@ jobs:
 
           echo "cache_restore_speed_mbps=$CACHE_RESTORE_SPEED_MBPS" >> $GITHUB_OUTPUT
 
-          echo "### Cache Restore Statistics (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache Restore Statistics (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           if [[ -n "$CACHE_RESTORE_SPEED_MBPS" ]]; then
             echo "- **Cache restore speed:** ${CACHE_RESTORE_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
           else
             echo "- **Cache restore speed:** Unable to calculate" >> $GITHUB_STEP_SUMMARY
-          fi
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
       - name: Send metrics to Datadog
         if: always()
@@ -1387,18 +1387,18 @@ jobs:
           echo "checkout_repo=$CHECKOUT_REPO" >> $GITHUB_OUTPUT
           echo "commit_count=$COMMIT_COUNT" >> $GITHUB_OUTPUT
 
-          echo "### Repository Checkout Performance Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Repository Checkout Performance Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Repository:** $CHECKOUT_REPO" >> $GITHUB_STEP_SUMMARY
           echo "- **Checkout time:** ${CHECKOUT_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository size:** ${REPO_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit count:** $COMMIT_COUNT" >> $GITHUB_STEP_SUMMARY
           if [[ -n "$CHECKOUT_SPEED_MB_PER_MIN" ]]; then
             echo "- **Checkout speed:** ${CHECKOUT_SPEED_MB_PER_MIN} MB/min" >> $GITHUB_STEP_SUMMARY
-          fi
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
       - name: Send metrics to Datadog
         if: always()
@@ -1551,8 +1551,12 @@ jobs:
           echo "image_size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
           echo "build_speed_mb_per_min=$BUILD_SPEED_MB_PER_MIN" >> $GITHUB_OUTPUT
 
-          echo "### Docker Build Performance Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Build Performance Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Repository:** ${{ steps.clone_timing.outputs.docker_repo }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Clone time:** ${CLONE_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Build time:** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
@@ -1560,10 +1564,6 @@ jobs:
           echo "- **Image size:** ${IMAGE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
           if [[ -n "$BUILD_SPEED_MB_PER_MIN" ]]; then
             echo "- **Build efficiency:** ${BUILD_SPEED_MB_PER_MIN} MB/min" >> $GITHUB_STEP_SUMMARY
-          fi
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
       - name: Send metrics to Datadog
         if: always()
@@ -1706,8 +1706,12 @@ jobs:
           echo "image_size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
           echo "build_speed_mb_per_min=$BUILD_SPEED_MB_PER_MIN" >> $GITHUB_OUTPUT
 
-          echo "### Docker Build Performance Results - Cached (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Build Performance Results - Cached (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Repository:** ${{ steps.clone_timing.outputs.docker_repo }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Clone time:** ${CLONE_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Build time:** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
@@ -1715,10 +1719,6 @@ jobs:
           echo "- **Image size:** ${IMAGE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
           if [[ -n "$BUILD_SPEED_MB_PER_MIN" ]]; then
             echo "- **Build efficiency:** ${BUILD_SPEED_MB_PER_MIN} MB/min" >> $GITHUB_STEP_SUMMARY
-          fi
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
       - name: Send metrics to Datadog
         if: always()
@@ -1827,16 +1827,16 @@ jobs:
 
           echo "### Docker Build — Local Storage Write (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
           echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Build time (real):** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Image size:** ${IMAGE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
           if [[ -n "$BUILD_SPEED_MB_PER_MIN" ]]; then
             echo "- **Build efficiency:** ${BUILD_SPEED_MB_PER_MIN} MB/min" >> $GITHUB_STEP_SUMMARY
           fi
           echo "- **EBS config:** ${{ env.EBS_CONFIG }}" >> $GITHUB_STEP_SUMMARY
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
-          fi
 
       - name: Send metrics to Datadog
         if: always()
@@ -1997,10 +1997,6 @@ jobs:
           echo "- **Min queue time:** ${MIN_QUEUE_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Max queue time:** ${MAX_QUEUE_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Average queue time:** ${AVG_QUEUE_TIME}s" >> $GITHUB_STEP_SUMMARY
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
-          fi
 
       - name: Upload queue analysis results
         uses: actions/upload-artifact@v4
@@ -2095,22 +2091,22 @@ jobs:
           echo "server_location_first=$SERVER_LOCATION_FIRST" >> $GITHUB_OUTPUT
           echo "server_name_first=$SERVER_NAME_FIRST" >> $GITHUB_OUTPUT
 
-          echo "### Network Bandwidth Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Network Bandwidth Test (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Download speed:** ${DOWNLOAD_SPEED_MBPS_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
           echo "- **Upload speed:** ${UPLOAD_SPEED_MBPS_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
           echo "- **Ping:** ${PING_MS_FIRST} ms" >> $GITHUB_STEP_SUMMARY
           echo "- **Server:** $SERVER_NAME_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Server Location:** $SERVER_LOCATION_FIRST" >> $GITHUB_STEP_SUMMARY
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
-          fi
 
       - name: Upload speedtest results
         uses: actions/upload-artifact@v4
         with:
-          name: network-bandwidth-results-ubuntu-24.04-aws
+          name: network-bandwidth-results-${{ matrix.runner }}
           path: |
             speedtest_results_first.json
       - name: Send metrics to Datadog
@@ -2227,17 +2223,17 @@ jobs:
           echo "total_time_first=$TOTAL_TIME_FIRST" >> $GITHUB_OUTPUT
           echo "files_copied_first=$FILES_COPIED" >> $GITHUB_OUTPUT
 
-          echo "### Rsync Performance Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Rsync Performance Test (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Source directory:** $SYNC_SUBTREE" >> $GITHUB_STEP_SUMMARY
           echo "- **Sample percentage:** $SAMPLE_PERCENTAGE%" >> $GITHUB_STEP_SUMMARY
           echo "- **Files copied:** $FILES_COPIED" >> $GITHUB_STEP_SUMMARY
           echo "- **Rsync time:** ${RSYNC_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
-          fi
       - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
@@ -2333,17 +2329,17 @@ jobs:
           echo "package_size_mb=$PKG_SIZE_MB" >> $GITHUB_OUTPUT
           echo "download_speed_mb_per_s=$DOWNLOAD_SPEED" >> $GITHUB_OUTPUT
 
-          echo "### APT Package Installation Test Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### APT Package Installation Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Package:** $APT_PACKAGE" >> $GITHUB_STEP_SUMMARY
           echo "- **Installation time:** ${INSTALL_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Package size:** ${PKG_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
           if [[ "$DOWNLOAD_SPEED" != "unknown" ]]; then
             echo "- **Effective download speed:** ${DOWNLOAD_SPEED} MB/s" >> $GITHUB_STEP_SUMMARY
-          fi
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
       - name: Send metrics to Datadog
         if: always()
@@ -2494,8 +2490,12 @@ jobs:
           echo "package_manager=$PACKAGE_MANAGER" >> $GITHUB_OUTPUT
           echo "dependencies_count=$DEPENDENCIES_COUNT" >> $GITHUB_OUTPUT
 
-          echo "### Node.js Build Performance Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Node.js Build Performance Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Repository:** ${{ steps.clone_timing.outputs.nodejs_repo }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Package Manager:** $PACKAGE_MANAGER" >> $GITHUB_STEP_SUMMARY
           echo "- **Dependencies Count:** $DEPENDENCIES_COUNT" >> $GITHUB_STEP_SUMMARY
@@ -2503,10 +2503,6 @@ jobs:
           echo "- **Install time:** ${INSTALL_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Build time:** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
-          fi
 
           cd ..
       - name: Send metrics to Datadog
@@ -2598,8 +2594,12 @@ jobs:
           echo "go_repo=$GO_REPO" >> $GITHUB_OUTPUT
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
 
-          echo "### Go Build Performance Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
+          echo "### Go Build Performance Test (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Repository:** $GO_REPO" >> $GITHUB_STEP_SUMMARY
 
       - name: Time Go build operations
@@ -2651,10 +2651,6 @@ jobs:
           echo "- **Build method:** $BUILD_METHOD" >> $GITHUB_STEP_SUMMARY
           echo "- **Build time:** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
-          fi
 
           cd ..
       - name: Send metrics to Datadog
