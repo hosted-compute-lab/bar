@@ -25,12 +25,11 @@ on:
         default: 'torvalds/linux'
         type: string
       matrix_size:
-        description: 'Number of parallel jobs for queue time testing'
+        description: 'Number of parallel jobs for queue time testing (Azure only, AWS is always 0)'
         required: false
         default: '10'
         type: string
       sync_subtree:
-        description: 'Directory subtree to copy for rsync testing'
         required: false
         default: '/usr'
         type: string
@@ -54,6 +53,20 @@ on:
         required: false
         default: 'kubernetes/kubernetes'
         type: string
+      runners:
+        description: 'Which runners to test'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - aws-only
+          - azure-only
+      ebs_max:
+        description: 'EBS provisioned at max tier - aws only'
+        required: false
+        default: false
+        type: boolean
 
   schedule:
     - cron: '0 * * * *'  
@@ -61,16 +74,34 @@ on:
 env:
   TEST_DURATION: ${{ github.event.inputs.test_duration || '60' }}
   FILE_SIZE: ${{ github.event.inputs.file_size || '2' }}
+  EBS_CONFIG: ${{ github.event.inputs.ebs_max == 'true' && '37500iops_1250mb' || '3000iops_125mb' }}
 
 permissions:
   actions: read
   contents: read
 
 jobs:
+  generate-runners:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-runners.outputs.matrix }}
+    steps:
+      - name: Set runner matrix
+        id: set-runners
+        run: |
+          RUNNERS="${{ github.event.inputs.runners || 'both' }}"
+          case "$RUNNERS" in
+            aws-only)   MATRIX='["ubuntu-24.04-aws"]' ;;
+            azure-only) MATRIX='["ubuntu-latest"]' ;;
+            *)          MATRIX='["ubuntu-latest","ubuntu-24.04-aws"]' ;;
+          esac
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
   system_info:
+    needs: generate-runners
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
     outputs:
@@ -87,39 +118,32 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-
-      - name: Get system information
-        id: sysinfo
-        run: |
-          echo "cpu_cores=$(nproc)" >> $GITHUB_OUTPUT
-          echo "total_memory=$(free -m | awk 'NR==2{printf "%.1fGB", $2/1024}')" >> $GITHUB_OUTPUT
-          echo "runner_os=$(uname -s)" >> $GITHUB_OUTPUT
-          echo "runner_arch=$(uname -m)" >> $GITHUB_OUTPUT
-
-          echo "### System Information (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **CPU Cores:** $(nproc)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Total Memory:** $(free -m | awk 'NR==2{printf "%.1fGB", $2/1024}')" >> $GITHUB_STEP_SUMMARY
-          echo "- **OS:** $(uname -s)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Architecture:** $(uname -m)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Kernel:** $(uname -r)" >> $GITHUB_STEP_SUMMARY
-          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
-            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
-          fi
 
       - name: Get hardware information
         run: |
@@ -135,22 +159,17 @@ jobs:
       - name: Upload hardware information
         uses: actions/upload-artifact@v4
         with:
-          name: hardware-info-${{ github.run_id }}-${{ matrix.runner }}
+          name: hardware-info-${{ github.run_id }}-ubuntu-24.04-aws
           path: hardware_info.json
 
   single_core_cpu:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
-      events_per_second: ${{ steps.test.outputs.events_per_second }}
-      total_time: ${{ steps.test.outputs.total_time }}
-      min_latency: ${{ steps.test.outputs.min_latency }}
-      avg_latency: ${{ steps.test.outputs.avg_latency }}
-      max_latency: ${{ steps.test.outputs.max_latency }}
       events_per_second_first: ${{ steps.test.outputs.events_per_second_first }}
       total_time_first: ${{ steps.test.outputs.total_time_first }}
       min_latency_first: ${{ steps.test.outputs.min_latency_first }}
@@ -165,16 +184,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -187,7 +219,6 @@ jobs:
       - name: Run single-core CPU test
         id: test
         run: |
-          echo "=== FIRST RUN (before warmup) ==="
           sysbench cpu --cpu-max-prime=20000 --threads=1 --time=${{ env.TEST_DURATION }} run > cpu_single_results_first.txt
 
           EVENTS_PER_SEC_FIRST=$(grep "events per second:" cpu_single_results_first.txt | awk '{print $4}')
@@ -202,38 +233,13 @@ jobs:
           echo "avg_latency_first=$AVG_LATENCY_FIRST" >> $GITHUB_OUTPUT
           echo "max_latency_first=$MAX_LATENCY_FIRST" >> $GITHUB_OUTPUT
 
-          echo "Sleeping 5 minutes to allow VM warmup..."
-          sleep 300
-
-          echo "=== SECOND RUN (after warmup) ==="
-          sysbench cpu --cpu-max-prime=20000 --threads=1 --time=${{ env.TEST_DURATION }} run > cpu_single_results.txt
-
-          EVENTS_PER_SEC=$(grep "events per second:" cpu_single_results.txt | awk '{print $4}')
-          TOTAL_TIME=$(grep "total time:" cpu_single_results.txt | awk '{print $3}' | tr -d 's')
-          MIN_LATENCY=$(grep "min:" cpu_single_results.txt | awk '{print $2}')
-          AVG_LATENCY=$(grep "avg:" cpu_single_results.txt | awk '{print $2}')
-          MAX_LATENCY=$(grep "max:" cpu_single_results.txt | awk '{print $2}')
-
-          echo "events_per_second=$EVENTS_PER_SEC" >> $GITHUB_OUTPUT
-          echo "total_time=$TOTAL_TIME" >> $GITHUB_OUTPUT
-          echo "min_latency=$MIN_LATENCY" >> $GITHUB_OUTPUT
-          echo "avg_latency=$AVG_LATENCY" >> $GITHUB_OUTPUT
-          echo "max_latency=$MAX_LATENCY" >> $GITHUB_OUTPUT
-
-          echo "### Single-Core CPU Test - First Run (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Single-Core CPU Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Events per second:** $EVENTS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Min latency:** ${MIN_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
           echo "- **Avg latency:** ${AVG_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
           echo "- **Max latency:** ${MAX_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
-          echo "### Single-Core CPU Test - Second Run (after warmup) (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Events per second:** $EVENTS_PER_SEC" >> $GITHUB_STEP_SUMMARY
-          echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
-          echo "- **Min latency:** ${MIN_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
-          echo "- **Avg latency:** ${AVG_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
-          echo "- **Max latency:** ${MAX_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
@@ -242,11 +248,10 @@ jobs:
       - name: Upload single-core results
         uses: actions/upload-artifact@v4
         with:
-          name: single-core-cpu-results-${{ matrix.runner }}
+          name: single-core-cpu-results-ubuntu-24.04-aws
           path: |
-            cpu_single_results.txt
             cpu_single_results_first.txt
-      - name: Send first-run metrics to Datadog
+      - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
         with:
@@ -260,7 +265,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.single_core.avg_latency_ms"
               value: ${{ steps.test.outputs.avg_latency_first }}
@@ -269,7 +274,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.single_core.max_latency_ms"
               value: ${{ steps.test.outputs.max_latency_first }}
@@ -278,54 +283,16 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
-      - name: Send metrics to Datadog
-        if: always()
-        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
-        with:
-          api-key: ${{ secrets.DATADOG_API_KEY }}
-          metrics: |
-            - type: "gauge"
-              name: "hosted_compute.performance_test.cpu.single_core.events_per_second"
-              value: ${{ steps.test.outputs.events_per_second }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.cpu.single_core.avg_latency_ms"
-              value: ${{ steps.test.outputs.avg_latency }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.cpu.single_core.max_latency_ms"
-              value: ${{ steps.test.outputs.max_latency }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   multi_core_cpu:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
-      events_per_second: ${{ steps.test.outputs.events_per_second }}
-      total_time: ${{ steps.test.outputs.total_time }}
-      min_latency: ${{ steps.test.outputs.min_latency }}
-      avg_latency: ${{ steps.test.outputs.avg_latency }}
-      max_latency: ${{ steps.test.outputs.max_latency }}
       events_per_second_first: ${{ steps.test.outputs.events_per_second_first }}
       total_time_first: ${{ steps.test.outputs.total_time_first }}
       min_latency_first: ${{ steps.test.outputs.min_latency_first }}
@@ -340,16 +307,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -363,7 +343,6 @@ jobs:
         id: test
         run: |
           CORES=$(nproc)
-          echo "=== FIRST RUN (before warmup) ==="
           echo "Running multi-core CPU performance test with $CORES threads..."
 
           sysbench cpu --cpu-max-prime=20000 --threads=$CORES --time=${{ env.TEST_DURATION }} run > cpu_multi_results_first.txt
@@ -380,38 +359,13 @@ jobs:
           echo "avg_latency_first=$AVG_LATENCY_FIRST" >> $GITHUB_OUTPUT
           echo "max_latency_first=$MAX_LATENCY_FIRST" >> $GITHUB_OUTPUT
 
-          echo "Sleeping 5 minutes to allow VM warmup..."
-          sleep 300
-
-          echo "=== SECOND RUN (after warmup) ==="
-          sysbench cpu --cpu-max-prime=20000 --threads=$CORES --time=${{ env.TEST_DURATION }} run > cpu_multi_results.txt
-
-          EVENTS_PER_SEC=$(grep "events per second:" cpu_multi_results.txt | awk '{print $4}')
-          TOTAL_TIME=$(grep "total time:" cpu_multi_results.txt | awk '{print $3}' | tr -d 's')
-          MIN_LATENCY=$(grep "min:" cpu_multi_results.txt | awk '{print $2}')
-          AVG_LATENCY=$(grep "avg:" cpu_multi_results.txt | awk '{print $2}')
-          MAX_LATENCY=$(grep "max:" cpu_multi_results.txt | awk '{print $2}')
-
-          echo "events_per_second=$EVENTS_PER_SEC" >> $GITHUB_OUTPUT
-          echo "total_time=$TOTAL_TIME" >> $GITHUB_OUTPUT
-          echo "min_latency=$MIN_LATENCY" >> $GITHUB_OUTPUT
-          echo "avg_latency=$AVG_LATENCY" >> $GITHUB_OUTPUT
-          echo "max_latency=$MAX_LATENCY" >> $GITHUB_OUTPUT
-
-          echo "### Multi-Core CPU Test - First Run (${{ matrix.runner }} - $CORES cores)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Multi-Core CPU Test (ubuntu-24.04-aws - $CORES cores)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Events per second:** $EVENTS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Min latency:** ${MIN_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
           echo "- **Avg latency:** ${AVG_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
           echo "- **Max latency:** ${MAX_LATENCY_FIRST}ms" >> $GITHUB_STEP_SUMMARY
-          echo "### Multi-Core CPU Test - Second Run (after warmup) (${{ matrix.runner }} - $CORES cores)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Events per second:** $EVENTS_PER_SEC" >> $GITHUB_STEP_SUMMARY
-          echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
-          echo "- **Min latency:** ${MIN_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
-          echo "- **Avg latency:** ${AVG_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
-          echo "- **Max latency:** ${MAX_LATENCY}ms" >> $GITHUB_STEP_SUMMARY
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
@@ -420,11 +374,10 @@ jobs:
       - name: Upload multi-core results
         uses: actions/upload-artifact@v4
         with:
-          name: multi-core-cpu-results-${{ matrix.runner }}
+          name: multi-core-cpu-results-ubuntu-24.04-aws
           path: |
-            cpu_multi_results.txt
             cpu_multi_results_first.txt
-      - name: Send first-run metrics to Datadog
+      - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
         with:
@@ -438,7 +391,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.multi_core.avg_latency_ms"
               value: ${{ steps.test.outputs.avg_latency_first }}
@@ -447,7 +400,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.multi_core.max_latency_ms"
               value: ${{ steps.test.outputs.max_latency_first }}
@@ -456,53 +409,16 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
-      - name: Send metrics to Datadog
-        if: always()
-        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
-        with:
-          api-key: ${{ secrets.DATADOG_API_KEY }}
-          metrics: |
-            - type: "gauge"
-              name: "hosted_compute.performance_test.cpu.multi_core.events_per_second"
-              value: ${{ steps.test.outputs.events_per_second }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.cpu.multi_core.avg_latency_ms"
-              value: ${{ steps.test.outputs.avg_latency }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.cpu.multi_core.max_latency_ms"
-              value: ${{ steps.test.outputs.max_latency }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   memory_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
-      total_ops: ${{ steps.test.outputs.total_ops }}
-      ops_per_second: ${{ steps.test.outputs.ops_per_second }}
-      transferred_mb: ${{ steps.test.outputs.transferred_mb }}
-      transfer_rate: ${{ steps.test.outputs.transfer_rate }}
       total_ops_first: ${{ steps.test.outputs.total_ops_first }}
       ops_per_second_first: ${{ steps.test.outputs.ops_per_second_first }}
       transferred_mb_first: ${{ steps.test.outputs.transferred_mb_first }}
@@ -516,16 +432,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -538,7 +467,6 @@ jobs:
       - name: Run memory performance test
         id: test
         run: |
-          echo "=== FIRST RUN (before warmup) ==="
           sysbench memory --memory-block-size=1K --memory-total-size=10G --threads=4 --time=${{ env.TEST_DURATION }} run > memory_results_first.txt
 
           TOTAL_OPS_FIRST=$(grep "Total operations:" memory_results_first.txt | awk '{print $3}')
@@ -551,34 +479,12 @@ jobs:
           echo "transferred_mb_first=$TRANSFERRED_MB_FIRST" >> $GITHUB_OUTPUT
           echo "transfer_rate_first=$TRANSFER_RATE_FIRST" >> $GITHUB_OUTPUT
 
-          echo "Sleeping 5 minutes to allow VM warmup..."
-          sleep 300
-
-          echo "=== SECOND RUN (after warmup) ==="
-          sysbench memory --memory-block-size=1K --memory-total-size=10G --threads=4 --time=${{ env.TEST_DURATION }} run > memory_results.txt
-
-          TOTAL_OPS=$(grep "Total operations:" memory_results.txt | awk '{print $3}')
-          OPS_PER_SEC=$(grep "Total operations:" memory_results.txt | awk -F'[ ()]+' '{print $4}')
-          TRANSFERRED_MB=$(grep "transferred" memory_results.txt | awk '{print $1}' | head -1)
-          TRANSFER_RATE=$(grep "transferred" memory_results.txt | awk -F'[ ()]+' '{print $4}' | head -1 | tr -d '()')
-
-          echo "total_ops=$TOTAL_OPS" >> $GITHUB_OUTPUT
-          echo "ops_per_second=$OPS_PER_SEC" >> $GITHUB_OUTPUT
-          echo "transferred_mb=$TRANSFERRED_MB" >> $GITHUB_OUTPUT
-          echo "transfer_rate=$TRANSFER_RATE" >> $GITHUB_OUTPUT
-
-          echo "### Memory Test - First Run (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Memory Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Total operations:** $TOTAL_OPS_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Operations per second:** $OPS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Data transferred:** ${TRANSFERRED_MB_FIRST} MB" >> $GITHUB_STEP_SUMMARY
           echo "- **Transfer rate:** $TRANSFER_RATE_FIRST" >> $GITHUB_STEP_SUMMARY
-          echo "### Memory Test - Second Run (after warmup) (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Total operations:** $TOTAL_OPS" >> $GITHUB_STEP_SUMMARY
-          echo "- **Operations per second:** $OPS_PER_SEC" >> $GITHUB_STEP_SUMMARY
-          echo "- **Data transferred:** ${TRANSFERRED_MB} MB" >> $GITHUB_STEP_SUMMARY
-          echo "- **Transfer rate:** $TRANSFER_RATE" >> $GITHUB_STEP_SUMMARY
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
@@ -587,11 +493,10 @@ jobs:
       - name: Upload memory results
         uses: actions/upload-artifact@v4
         with:
-          name: memory-test-results-${{ matrix.runner }}
+          name: memory-test-results-ubuntu-24.04-aws
           path: |
-            memory_results.txt
             memory_results_first.txt
-      - name: Send first-run metrics to Datadog
+      - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
         with:
@@ -605,7 +510,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.memory.transfer_rate_mb_s"
               value: ${{ steps.test.outputs.transfer_rate_first || '0' }}
@@ -614,48 +519,16 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
-      - name: Send metrics to Datadog
-        if: always()
-        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
-        with:
-          api-key: ${{ secrets.DATADOG_API_KEY }}
-          metrics: |
-            - type: "gauge"
-              name: "hosted_compute.performance_test.memory.ops_per_second"
-              value: ${{ steps.test.outputs.ops_per_second }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.memory.transfer_rate_mb_s"
-              value: ${{ steps.test.outputs.transfer_rate || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   fio_disk_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
-      sequential_read_iops: ${{ steps.test.outputs.sequential_read_iops }}
-      sequential_write_iops: ${{ steps.test.outputs.sequential_write_iops }}
-      random_read_iops: ${{ steps.test.outputs.random_read_iops }}
-      random_write_iops: ${{ steps.test.outputs.random_write_iops }}
-      sequential_read_bandwidth: ${{ steps.test.outputs.sequential_read_bandwidth }}
-      sequential_write_bandwidth: ${{ steps.test.outputs.sequential_write_bandwidth }}
-      random_read_latency: ${{ steps.test.outputs.random_read_latency }}
-      random_write_latency: ${{ steps.test.outputs.random_write_latency }}
       sequential_read_iops_first: ${{ steps.test.outputs.sequential_read_iops_first }}
       sequential_write_iops_first: ${{ steps.test.outputs.sequential_write_iops_first }}
       random_read_iops_first: ${{ steps.test.outputs.random_read_iops_first }}
@@ -673,16 +546,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -695,7 +581,6 @@ jobs:
       - name: Run FIO disk performance tests
         id: test
         run: |
-          echo "=== FIRST RUN (before warmup) ==="
           echo "Running FIO disk performance tests..."
 
           mkdir -p fio_test
@@ -752,62 +637,8 @@ jobs:
 
           rm -f *.0.*
 
-          echo "Sleeping 5 minutes to allow VM warmup..."
-          sleep 300
-
-          echo "=== SECOND RUN (after warmup) ==="
-
-          fio --name=seq_read --ioengine=libaio --iodepth=32 --rw=read --bs=1M --direct=1 \
-              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
-              --output-format=json --output=seq_read.json
-
-          fio --name=seq_write --ioengine=libaio --iodepth=32 --rw=write --bs=1M --direct=1 \
-              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
-              --output-format=json --output=seq_write.json
-
-          fio --name=rand_read --ioengine=libaio --iodepth=32 --rw=randread --bs=4K --direct=1 \
-              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
-              --output-format=json --output=rand_read.json
-
-          fio --name=rand_write --ioengine=libaio --iodepth=32 --rw=randwrite --bs=4K --direct=1 \
-              --size=${{ env.FILE_SIZE }}G --numjobs=1 --runtime=${{ env.TEST_DURATION }} --group_reporting \
-              --output-format=json --output=rand_write.json
-
-          SEQ_READ_IOPS=$(jq -r '.jobs[0].read.iops // "0"' seq_read.json 2>/dev/null | cut -d'.' -f1)
-          SEQ_WRITE_IOPS=$(jq -r '.jobs[0].write.iops // "0"' seq_write.json 2>/dev/null | cut -d'.' -f1)
-          RAND_READ_IOPS=$(jq -r '.jobs[0].read.iops // "0"' rand_read.json 2>/dev/null | cut -d'.' -f1)
-          RAND_WRITE_IOPS=$(jq -r '.jobs[0].write.iops // "0"' rand_write.json 2>/dev/null | cut -d'.' -f1)
-
-          SEQ_READ_BW=$(jq -r '.jobs[0].read.bw // "0"' seq_read.json 2>/dev/null | cut -d'.' -f1)
-          SEQ_WRITE_BW=$(jq -r '.jobs[0].write.bw // "0"' seq_write.json 2>/dev/null | cut -d'.' -f1)
-
-          RAND_READ_LAT=$(jq -r '.jobs[0].read.lat_ns.mean // "0"' rand_read.json 2>/dev/null)
-          RAND_WRITE_LAT=$(jq -r '.jobs[0].write.lat_ns.mean // "0"' rand_write.json 2>/dev/null)
-
-          if [[ "$RAND_READ_LAT" != "0" ]]; then
-            RAND_READ_LAT=$(echo "scale=2; $RAND_READ_LAT / 1000" | bc -l 2>/dev/null || echo "0")
-          fi
-          if [[ "$RAND_WRITE_LAT" != "0" ]]; then
-            RAND_WRITE_LAT=$(echo "scale=2; $RAND_WRITE_LAT / 1000" | bc -l 2>/dev/null || echo "0")
-          fi
-          if [[ "$SEQ_READ_BW" != "0" ]]; then
-            SEQ_READ_BW=$(echo "scale=2; $SEQ_READ_BW / 1024" | bc -l 2>/dev/null || echo "0")
-          fi
-          if [[ "$SEQ_WRITE_BW" != "0" ]]; then
-            SEQ_WRITE_BW=$(echo "scale=2; $SEQ_WRITE_BW / 1024" | bc -l 2>/dev/null || echo "0")
-          fi
-
-          echo "sequential_read_iops=$SEQ_READ_IOPS" >> $GITHUB_OUTPUT
-          echo "sequential_write_iops=$SEQ_WRITE_IOPS" >> $GITHUB_OUTPUT
-          echo "random_read_iops=$RAND_READ_IOPS" >> $GITHUB_OUTPUT
-          echo "random_write_iops=$RAND_WRITE_IOPS" >> $GITHUB_OUTPUT
-          echo "sequential_read_bandwidth=$SEQ_READ_BW" >> $GITHUB_OUTPUT
-          echo "sequential_write_bandwidth=$SEQ_WRITE_BW" >> $GITHUB_OUTPUT
-          echo "random_read_latency=$RAND_READ_LAT" >> $GITHUB_OUTPUT
-          echo "random_write_latency=$RAND_WRITE_LAT" >> $GITHUB_OUTPUT
-
-          echo "### FIO Disk Performance Test - First Run (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### FIO Disk Performance Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Sequential Read IOPS:** $SEQ_READ_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Sequential Write IOPS:** $SEQ_WRITE_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Random Read IOPS:** $RAND_READ_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
@@ -816,16 +647,6 @@ jobs:
           echo "- **Sequential Write Bandwidth:** ${SEQ_WRITE_BW_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
           echo "- **Random Read Latency:** ${RAND_READ_LAT_FIRST}μs" >> $GITHUB_STEP_SUMMARY
           echo "- **Random Write Latency:** ${RAND_WRITE_LAT_FIRST}μs" >> $GITHUB_STEP_SUMMARY
-          echo "### FIO Disk Performance Test - Second Run (after warmup) (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Sequential Read IOPS:** $SEQ_READ_IOPS" >> $GITHUB_STEP_SUMMARY
-          echo "- **Sequential Write IOPS:** $SEQ_WRITE_IOPS" >> $GITHUB_STEP_SUMMARY
-          echo "- **Random Read IOPS:** $RAND_READ_IOPS" >> $GITHUB_STEP_SUMMARY
-          echo "- **Random Write IOPS:** $RAND_WRITE_IOPS" >> $GITHUB_STEP_SUMMARY
-          echo "- **Sequential Read Bandwidth:** ${SEQ_READ_BW} MB/s" >> $GITHUB_STEP_SUMMARY
-          echo "- **Sequential Write Bandwidth:** ${SEQ_WRITE_BW} MB/s" >> $GITHUB_STEP_SUMMARY
-          echo "- **Random Read Latency:** ${RAND_READ_LAT}μs" >> $GITHUB_STEP_SUMMARY
-          echo "- **Random Write Latency:** ${RAND_WRITE_LAT}μs" >> $GITHUB_STEP_SUMMARY
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
@@ -836,9 +657,9 @@ jobs:
       - name: Upload FIO results
         uses: actions/upload-artifact@v4
         with:
-          name: fio-disk-test-results-${{ matrix.runner }}
+          name: fio-disk-test-results-ubuntu-24.04-aws
           path: fio_test/*.json
-      - name: Send first-run metrics to Datadog
+      - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
         with:
@@ -852,7 +673,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_write_iops"
               value: ${{ steps.test.outputs.sequential_write_iops_first || '0' }}
@@ -861,7 +682,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_read_iops"
               value: ${{ steps.test.outputs.random_read_iops_first || '0' }}
@@ -870,7 +691,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_write_iops"
               value: ${{ steps.test.outputs.random_write_iops_first || '0' }}
@@ -879,7 +700,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_read_bw_mb_s"
               value: ${{ steps.test.outputs.sequential_read_bandwidth_first || '0' }}
@@ -888,7 +709,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_write_bw_mb_s"
               value: ${{ steps.test.outputs.sequential_write_bandwidth_first || '0' }}
@@ -897,7 +718,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_read_latency_us"
               value: ${{ steps.test.outputs.random_read_latency_first || '0' }}
@@ -906,7 +727,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_write_latency_us"
               value: ${{ steps.test.outputs.random_write_latency_first || '0' }}
@@ -915,93 +736,15 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
-      - name: Send metrics to Datadog
-        if: always()
-        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
-        with:
-          api-key: ${{ secrets.DATADOG_API_KEY }}
-          metrics: |
-            - type: "gauge"
-              name: "hosted_compute.performance_test.disk.seq_read_iops"
-              value: ${{ steps.test.outputs.sequential_read_iops || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.disk.seq_write_iops"
-              value: ${{ steps.test.outputs.sequential_write_iops || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.disk.rand_read_iops"
-              value: ${{ steps.test.outputs.random_read_iops || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.disk.rand_write_iops"
-              value: ${{ steps.test.outputs.random_write_iops || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.disk.seq_read_bw_mb_s"
-              value: ${{ steps.test.outputs.sequential_read_bandwidth || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.disk.seq_write_bw_mb_s"
-              value: ${{ steps.test.outputs.sequential_write_bandwidth || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.disk.rand_read_latency_us"
-              value: ${{ steps.test.outputs.random_read_latency || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.disk.rand_write_latency_us"
-              value: ${{ steps.test.outputs.random_write_latency || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   artifact_upload_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
       file_generation_time: ${{ steps.generate.outputs.file_generation_time }}
       upload_time: ${{ steps.upload_timing.outputs.upload_time }}
@@ -1016,16 +759,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -1049,8 +805,8 @@ jobs:
           echo "file_generation_time=$FILE_GENERATION_TIME" >> $GITHUB_OUTPUT
           echo "file_size_mb=$FILE_SIZE_MB" >> $GITHUB_OUTPUT
 
-          echo "### File Generation Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### File Generation Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **File generation time:** ${FILE_GENERATION_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
 
@@ -1059,7 +815,7 @@ jobs:
       - name: Upload test file
         uses: actions/upload-artifact@v4
         with:
-          name: test-data-${{ env.FILE_SIZE }}gb-${{ matrix.runner }}
+          name: test-data-${{ env.FILE_SIZE }}gb-ubuntu-24.04-aws
           path: test_data_${{ env.FILE_SIZE }}gb.bin
           retention-days: 1
           compression-level: 0
@@ -1073,7 +829,7 @@ jobs:
 
           echo "upload_time=$UPLOAD_TIME" >> $GITHUB_OUTPUT
 
-          echo "### Upload Timing Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Upload Timing Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
           echo "- **Upload time:** ${UPLOAD_TIME}s" >> $GITHUB_STEP_SUMMARY
 
       - name: Compute upload statistics
@@ -1089,7 +845,7 @@ jobs:
 
           echo "upload_speed_mbps=$UPLOAD_SPEED_MBPS" >> $GITHUB_OUTPUT
 
-          echo "### Upload Statistics (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Upload Statistics (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
           if [[ -n "$UPLOAD_SPEED_MBPS" ]]; then
             echo "- **Upload speed:** ${UPLOAD_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
           else
@@ -1113,6 +869,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.artifact.upload_time_s"
               value: ${{ steps.upload_timing.outputs.upload_time || '0' }}
@@ -1121,14 +878,15 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   artifact_download_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: [system_info, artifact_upload_test]
+    needs: [system_info, artifact_upload_test, generate-runners]
     outputs:
       download_time: ${{ steps.compute_stats.outputs.download_time }}
       verification_time: ${{ steps.compute_stats.outputs.verification_time }}
@@ -1142,16 +900,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -1164,7 +935,7 @@ jobs:
       - name: Download test file
         uses: actions/download-artifact@v4
         with:
-          name: test-data-${{ env.FILE_SIZE }}gb-${{ matrix.runner }}
+          name: test-data-${{ env.FILE_SIZE }}gb-ubuntu-24.04-aws
           path: downloaded/
 
       - name: Record download completion and verify file
@@ -1199,8 +970,8 @@ jobs:
           echo "verification_time=$VERIFICATION_TIME" >> $GITHUB_OUTPUT
           echo "download_speed_mbps=$DOWNLOAD_SPEED_MBPS" >> $GITHUB_OUTPUT
 
-          echo "### Artifact Download Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifact Download Test Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Download time:** ${DOWNLOAD_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Verification time:** ${VERIFICATION_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
@@ -1228,6 +999,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.artifact.download_time_s"
               value: ${{ steps.compute_stats.outputs.download_time || '0' }}
@@ -1236,14 +1008,15 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   cache_upload_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
       file_generation_time: ${{ steps.generate.outputs.file_generation_time }}
       cache_save_time: ${{ steps.cache_timing.outputs.cache_save_time }}
@@ -1258,16 +1031,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -1292,8 +1078,8 @@ jobs:
           echo "file_generation_time=$FILE_GENERATION_TIME" >> $GITHUB_OUTPUT
           echo "file_size_mb=$FILE_SIZE_MB" >> $GITHUB_OUTPUT
 
-          echo "### Cache File Generation Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache File Generation Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **File generation time:** ${FILE_GENERATION_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
 
@@ -1303,7 +1089,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: cache_test_data/
-          key: cache-perf-test-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}
+          key: cache-perf-test-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu-24.04-aws
 
       - name: Record cache save timing
         id: cache_timing
@@ -1314,7 +1100,7 @@ jobs:
 
           echo "cache_save_time=$CACHE_SAVE_TIME" >> $GITHUB_OUTPUT
 
-          echo "### Cache Save Timing Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache Save Timing Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
           echo "- **Cache save time:** ${CACHE_SAVE_TIME}s" >> $GITHUB_STEP_SUMMARY
 
       - name: Compute cache save statistics
@@ -1330,7 +1116,7 @@ jobs:
 
           echo "cache_save_speed_mbps=$CACHE_SAVE_SPEED_MBPS" >> $GITHUB_OUTPUT
 
-          echo "### Cache Save Statistics (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache Save Statistics (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
           if [[ -n "$CACHE_SAVE_SPEED_MBPS" ]]; then
             echo "- **Cache save speed:** ${CACHE_SAVE_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
           else
@@ -1354,6 +1140,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cache.upload_time_s"
               value: ${{ steps.cache_timing.outputs.cache_save_time || '0' }}
@@ -1362,15 +1149,16 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
 
   cache_download_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: [system_info, cache_upload_test]
+    needs: [system_info, cache_upload_test, generate-runners]
     outputs:
       cache_restore_time: ${{ steps.cache_timing.outputs.cache_restore_time }}
       verification_time: ${{ steps.verification.outputs.verification_time }}
@@ -1385,16 +1173,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -1408,7 +1209,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: cache_test_data/
-          key: cache-perf-test-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}
+          key: cache-perf-test-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu-24.04-aws
 
       - name: Record cache restore timing
         id: cache_timing
@@ -1419,8 +1220,8 @@ jobs:
 
           echo "cache_restore_time=$CACHE_RESTORE_TIME" >> $GITHUB_OUTPUT
 
-          echo "### Cache Restore Timing Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache Restore Timing Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Cache restore time:** ${CACHE_RESTORE_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Cache hit:** ${{ steps.cache_restore.outputs.cache-hit }}" >> $GITHUB_STEP_SUMMARY
 
@@ -1445,7 +1246,7 @@ jobs:
 
           echo "verification_time=$VERIFICATION_TIME" >> $GITHUB_OUTPUT
 
-          echo "### Cache Verification Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache Verification Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
           echo "- **Verification time:** ${VERIFICATION_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
           echo "- **Verification status:** $VERIFY_STATUS" >> $GITHUB_STEP_SUMMARY
@@ -1464,7 +1265,7 @@ jobs:
 
           echo "cache_restore_speed_mbps=$CACHE_RESTORE_SPEED_MBPS" >> $GITHUB_OUTPUT
 
-          echo "### Cache Restore Statistics (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Cache Restore Statistics (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
           if [[ -n "$CACHE_RESTORE_SPEED_MBPS" ]]; then
             echo "- **Cache restore speed:** ${CACHE_RESTORE_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
           else
@@ -1488,6 +1289,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cache.download_time_s"
               value: ${{ steps.cache_timing.outputs.cache_restore_time || '0' }}
@@ -1496,14 +1298,15 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   checkout_performance_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
       checkout_time: ${{ steps.metrics.outputs.checkout_time }}
       repo_size_mb: ${{ steps.metrics.outputs.repo_size_mb }}
@@ -1519,16 +1322,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -1571,8 +1387,8 @@ jobs:
           echo "checkout_repo=$CHECKOUT_REPO" >> $GITHUB_OUTPUT
           echo "commit_count=$COMMIT_COUNT" >> $GITHUB_OUTPUT
 
-          echo "### Repository Checkout Performance Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Repository Checkout Performance Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository:** $CHECKOUT_REPO" >> $GITHUB_STEP_SUMMARY
           echo "- **Checkout time:** ${CHECKOUT_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository size:** ${REPO_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
@@ -1598,6 +1414,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.checkout.speed_mb_per_min"
               value: ${{ steps.metrics.outputs.checkout_speed_mb_per_min || '0' }}
@@ -1606,14 +1423,15 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
-  docker_build_test:
+  docker_build_remote:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
       clone_time: ${{ steps.timing.outputs.clone_time }}
       build_time: ${{ steps.timing.outputs.build_time }}
@@ -1630,22 +1448,47 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+
+      - name: Reset Docker state for cold build (AWS only)
+        if: contains(matrix.runner, 'aws')
+        run: |
+          sudo systemctl stop docker
+          sudo systemctl stop containerd || true
+          sudo rm -rf /var/lib/docker
+          sudo rm -rf /var/lib/containerd
+          sudo systemctl daemon-reload || true
+          sudo systemctl start containerd || true
+          sudo systemctl start docker
 
       - name: Clone repository
         id: clone_timing
@@ -1708,8 +1551,8 @@ jobs:
           echo "image_size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
           echo "build_speed_mb_per_min=$BUILD_SPEED_MB_PER_MIN" >> $GITHUB_OUTPUT
 
-          echo "### Docker Build Performance Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Build Performance Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository:** ${{ steps.clone_timing.outputs.docker_repo }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Clone time:** ${CLONE_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Build time:** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
@@ -1736,6 +1579,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
                 - "cached:false"
             - type: "gauge"
               name: "hosted_compute.performance_test.docker.total_time_s"
@@ -1745,15 +1589,16 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
                 - "cached:false"
 
-  docker_build_test_cached:
+  docker_build_remote_cached:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: [system_info, docker_build_test]
+    needs: [system_info, docker_build_remote, generate-runners]
     outputs:
       clone_time: ${{ steps.timing.outputs.clone_time }}
       build_time: ${{ steps.timing.outputs.build_time }}
@@ -1770,16 +1615,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -1848,8 +1706,8 @@ jobs:
           echo "image_size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
           echo "build_speed_mb_per_min=$BUILD_SPEED_MB_PER_MIN" >> $GITHUB_OUTPUT
 
-          echo "### Docker Build Performance Results - Cached (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Build Performance Results - Cached (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository:** ${{ steps.clone_timing.outputs.docker_repo }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Clone time:** ${CLONE_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Build time:** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
@@ -1876,7 +1734,134 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
                 - "cached:true"
+
+
+  docker_build_local_storage:
+    strategy:
+      matrix:
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
+    needs: [generate-runners, system_info]
+    outputs:
+      build_time: ${{ steps.timing.outputs.build_time }}
+      image_size_mb: ${{ steps.timing.outputs.image_size_mb }}
+      build_speed_mb_per_min: ${{ steps.timing.outputs.build_speed_mb_per_min }}
+      azure_vm_sku: ${{ steps.azure.outputs.azure_vm_sku }}
+      azure_region: ${{ steps.azure.outputs.azure_region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Azure metadata
+        id: azure
+        run: |
+          VM_SKU=""
+          REGION=""
+
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
+          fi
+
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
+
+          CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
+          echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+
+      - name: Reset Docker state (fully cold, all runners)
+        run: |
+          sudo systemctl stop docker
+          sudo systemctl stop containerd || true
+          sudo rm -rf /var/lib/docker
+          sudo rm -rf /var/lib/containerd
+          sudo systemctl daemon-reload || true
+          sudo systemctl start containerd || true
+          sudo systemctl start docker
+          sudo docker buildx rm coldbuilder || true
+          sudo docker buildx create --driver docker-container --name coldbuilder --use
+          sudo docker buildx inspect --bootstrap
+
+      - name: Build Docker image (local storage write benchmark)
+        id: timing
+        run: |
+          BUILD_OUTPUT=$( { sudo /usr/bin/time -f 'real=%e user=%U sys=%S' docker buildx build \
+            --builder coldbuilder \
+            --no-cache \
+            --progress=plain \
+            --load \
+            --tag perf-local-storage:latest \
+            -f .github/workflows-lab/Dockerfile.perf \
+            . ; } 2>&1 )
+
+          BUILD_TIME=$(echo "$BUILD_OUTPUT" | grep -oP 'real=\K[0-9.]+' || echo "0")
+
+          IMAGE_SIZE_BYTES=$(docker image inspect perf-local-storage:latest --format='{{.Size}}' 2>/dev/null || echo "0")
+          IMAGE_SIZE_MB=$((IMAGE_SIZE_BYTES / 1024 / 1024))
+
+          BUILD_SPEED_MB_PER_MIN=""
+          BUILD_TIME_INT=${BUILD_TIME%.*}
+          if [[ -n "$BUILD_TIME_INT" && $BUILD_TIME_INT -gt 0 && $IMAGE_SIZE_MB -gt 0 ]]; then
+            BUILD_SPEED_MB_PER_MIN=$(echo "scale=2; $IMAGE_SIZE_MB * 60 / $BUILD_TIME_INT" | bc -l 2>/dev/null || echo "")
+          fi
+
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+          echo "image_size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
+          echo "build_speed_mb_per_min=$BUILD_SPEED_MB_PER_MIN" >> $GITHUB_OUTPUT
+
+          echo "### Docker Build — Local Storage Write (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build time (real):** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image size:** ${IMAGE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "$BUILD_SPEED_MB_PER_MIN" ]]; then
+            echo "- **Build efficiency:** ${BUILD_SPEED_MB_PER_MIN} MB/min" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "- **EBS config:** ${{ env.EBS_CONFIG }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
+            echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Send metrics to Datadog
+        if: always()
+        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
+        with:
+          api-key: ${{ secrets.DATADOG_API_KEY }}
+          metrics: |
+            - type: "gauge"
+              name: "hosted_compute.performance_test.docker.local_storage_build_time_s"
+              value: ${{ steps.timing.outputs.build_time || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
+            - type: "gauge"
+              name: "hosted_compute.performance_test.docker.local_storage_build_speed_mb_per_min"
+              value: ${{ steps.timing.outputs.build_speed_mb_per_min || '0' }}
+              tags:
+                - "runner:${{ matrix.runner }}"
+                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
+                - "azure_region:${{ steps.azure.outputs.azure_region }}"
+                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   generate-matrix:
     runs-on: ubuntu-latest
@@ -1886,26 +1871,33 @@ jobs:
       - name: Set matrix
         id: set-matrix
         run: |
+          RUNNERS="${{ github.event.inputs.runners || 'both' }}"
           MATRIX_SIZE=${{ github.event.inputs.matrix_size || '10' }}
-          MATRIX_JSON=$(seq 1 $MATRIX_SIZE | jq -R -s -c 'split("\n")[:-1]')
+          if [[ "$RUNNERS" == "aws-only" ]]; then
+            MATRIX_JSON='[]'
+          elif [[ $MATRIX_SIZE -eq 0 ]]; then
+            MATRIX_JSON='[]'
+          else
+            MATRIX_JSON=$(seq 1 $MATRIX_SIZE | jq -R -s -c 'split("\n")[:-1]')
+          fi
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
   start-queue-test:
-    needs: generate-matrix
+    needs: [generate-matrix, generate-runners]
+    if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
     strategy:
       matrix:
-        runner: [ubuntu-latest]
         job_id: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
       fail-fast: false
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     steps:
       - name: Simple test job
         run: |
-          echo "Hello from matrix job ${{ matrix.job_id }} on ${{ matrix.runner }}"
+          echo "Hello from matrix job ${{ matrix.job_id }} on ubuntu-latest"
 
   finish-queue-test:
     runs-on: ubuntu-latest
-    needs: [system_info, start-queue-test]
+    needs: [system_info, start-queue-test, generate-runners]
     outputs:
       min_queue_time: ${{ steps.analyze.outputs.min_queue_time }}
       max_queue_time: ${{ steps.analyze.outputs.max_queue_time }}
@@ -1920,16 +1912,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -2009,16 +2014,11 @@ jobs:
   network_bandwidth_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
-      download_speed_mbps: ${{ steps.test.outputs.download_speed_mbps }}
-      upload_speed_mbps: ${{ steps.test.outputs.upload_speed_mbps }}
-      ping_ms: ${{ steps.test.outputs.ping_ms }}
-      server_location: ${{ steps.test.outputs.server_location }}
-      server_name: ${{ steps.test.outputs.server_name }}
       download_speed_mbps_first: ${{ steps.test.outputs.download_speed_mbps_first }}
       upload_speed_mbps_first: ${{ steps.test.outputs.upload_speed_mbps_first }}
       ping_ms_first: ${{ steps.test.outputs.ping_ms_first }}
@@ -2033,16 +2033,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -2055,7 +2068,6 @@ jobs:
       - name: Run network bandwidth test
         id: test
         run: |
-          echo "=== FIRST RUN (before warmup) ==="
           speedtest-cli --json > speedtest_results_first.json
 
           DOWNLOAD_SPEED_BPS_FIRST=$(jq -r '.download // "0"' speedtest_results_first.json)
@@ -2083,51 +2095,13 @@ jobs:
           echo "server_location_first=$SERVER_LOCATION_FIRST" >> $GITHUB_OUTPUT
           echo "server_name_first=$SERVER_NAME_FIRST" >> $GITHUB_OUTPUT
 
-          echo "Sleeping 5 minutes to allow VM warmup..."
-          sleep 300
-
-          echo "=== SECOND RUN (after warmup) ==="
-          speedtest-cli --json > speedtest_results.json
-
-          DOWNLOAD_SPEED_BPS=$(jq -r '.download // "0"' speedtest_results.json)
-          UPLOAD_SPEED_BPS=$(jq -r '.upload // "0"' speedtest_results.json)
-          PING_MS=$(jq -r '.ping // "0"' speedtest_results.json)
-          SERVER_NAME=$(jq -r '.server.name // "Unknown"' speedtest_results.json)
-          SERVER_LOCATION=$(jq -r '.server.country // "Unknown"' speedtest_results.json)
-
-          DOWNLOAD_SPEED_MBPS="0"
-          UPLOAD_SPEED_MBPS="0"
-
-          if [[ "$DOWNLOAD_SPEED_BPS" != "0" && "$DOWNLOAD_SPEED_BPS" != "null" ]]; then
-            DOWNLOAD_SPEED_MBPS=$(echo "scale=2; $DOWNLOAD_SPEED_BPS / 8000000" | bc -l 2>/dev/null || echo "0")
-          fi
-          if [[ "$UPLOAD_SPEED_BPS" != "0" && "$UPLOAD_SPEED_BPS" != "null" ]]; then
-            UPLOAD_SPEED_MBPS=$(echo "scale=2; $UPLOAD_SPEED_BPS / 8000000" | bc -l 2>/dev/null || echo "0")
-          fi
-          if [[ "$PING_MS" != "null" && "$PING_MS" != "0" ]]; then
-            PING_MS=$(echo "scale=2; $PING_MS / 1" | bc -l 2>/dev/null || echo "0")
-          fi
-
-          echo "download_speed_mbps=$DOWNLOAD_SPEED_MBPS" >> $GITHUB_OUTPUT
-          echo "upload_speed_mbps=$UPLOAD_SPEED_MBPS" >> $GITHUB_OUTPUT
-          echo "ping_ms=$PING_MS" >> $GITHUB_OUTPUT
-          echo "server_location=$SERVER_LOCATION" >> $GITHUB_OUTPUT
-          echo "server_name=$SERVER_NAME" >> $GITHUB_OUTPUT
-
-          echo "### Network Bandwidth Test - First Run (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Network Bandwidth Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Download speed:** ${DOWNLOAD_SPEED_MBPS_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
           echo "- **Upload speed:** ${UPLOAD_SPEED_MBPS_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
           echo "- **Ping:** ${PING_MS_FIRST} ms" >> $GITHUB_STEP_SUMMARY
           echo "- **Server:** $SERVER_NAME_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Server Location:** $SERVER_LOCATION_FIRST" >> $GITHUB_STEP_SUMMARY
-          echo "### Network Bandwidth Test - Second Run (after warmup) (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Download speed:** ${DOWNLOAD_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
-          echo "- **Upload speed:** ${UPLOAD_SPEED_MBPS} MB/s" >> $GITHUB_STEP_SUMMARY
-          echo "- **Ping:** ${PING_MS} ms" >> $GITHUB_STEP_SUMMARY
-          echo "- **Server:** $SERVER_NAME" >> $GITHUB_STEP_SUMMARY
-          echo "- **Server Location:** $SERVER_LOCATION" >> $GITHUB_STEP_SUMMARY
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
@@ -2136,11 +2110,10 @@ jobs:
       - name: Upload speedtest results
         uses: actions/upload-artifact@v4
         with:
-          name: network-bandwidth-results-${{ matrix.runner }}
+          name: network-bandwidth-results-ubuntu-24.04-aws
           path: |
-            speedtest_results.json
             speedtest_results_first.json
-      - name: Send first-run metrics to Datadog
+      - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
         with:
@@ -2154,7 +2127,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.network.upload_mb_s"
               value: ${{ steps.test.outputs.upload_speed_mbps_first || '0' }}
@@ -2163,7 +2136,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.network.ping_ms"
               value: ${{ steps.test.outputs.ping_ms_first || '0' }}
@@ -2172,52 +2145,16 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
-      - name: Send metrics to Datadog
-        if: always()
-        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
-        with:
-          api-key: ${{ secrets.DATADOG_API_KEY }}
-          metrics: |
-            - type: "gauge"
-              name: "hosted_compute.performance_test.network.download_mb_s"
-              value: ${{ steps.test.outputs.download_speed_mbps || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.network.upload_mb_s"
-              value: ${{ steps.test.outputs.upload_speed_mbps || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
-            - type: "gauge"
-              name: "hosted_compute.performance_test.network.ping_ms"
-              value: ${{ steps.test.outputs.ping_ms || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   rsync_performance_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
-      rsync_time: ${{ steps.timing.outputs.rsync_time }}
-      total_time: ${{ steps.timing.outputs.total_time }}
-      files_copied: ${{ steps.timing.outputs.files_copied }}
       rsync_time_first: ${{ steps.timing.outputs.rsync_time_first }}
       total_time_first: ${{ steps.timing.outputs.total_time_first }}
       files_copied_first: ${{ steps.timing.outputs.files_copied_first }}
@@ -2230,16 +2167,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -2265,7 +2215,6 @@ jobs:
             FILES_COPIED=0
           fi
 
-          echo "=== FIRST RUN (before warmup) ==="
           RSYNC_START_TIME_FIRST=$(date +%s)
           sudo mkdir -p /tmp/rsync_test_dst_first
           sudo rsync -av --files-from=/tmp/sampled_files.txt / /tmp/rsync_test_dst_first/ > /tmp/rsync_output_first.txt 2>/dev/null || true
@@ -2278,42 +2227,18 @@ jobs:
           echo "total_time_first=$TOTAL_TIME_FIRST" >> $GITHUB_OUTPUT
           echo "files_copied_first=$FILES_COPIED" >> $GITHUB_OUTPUT
 
-          echo "Sleeping 5 minutes to allow VM warmup..."
-          sleep 300
-
-          echo "=== SECOND RUN (after warmup) ==="
-          RSYNC_START_TIME=$(date +%s)
-          sudo mkdir -p /tmp/rsync_test_dst
-          sudo rsync -av --files-from=/tmp/sampled_files.txt / /tmp/rsync_test_dst/ > /tmp/rsync_output.txt 2>/dev/null || true
-          RSYNC_END_TIME=$(date +%s)
-          RSYNC_TIME=$((RSYNC_END_TIME - RSYNC_START_TIME))
-
-          TOTAL_END_TIME=$(date +%s)
-          TOTAL_TIME=$((TOTAL_END_TIME - TOTAL_START_TIME))
-
-          echo "rsync_time=$RSYNC_TIME" >> $GITHUB_OUTPUT
-          echo "total_time=$TOTAL_TIME" >> $GITHUB_OUTPUT
-          echo "files_copied=$FILES_COPIED" >> $GITHUB_OUTPUT
-
-          echo "### Rsync Performance Test - First Run (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Rsync Performance Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Source directory:** $SYNC_SUBTREE" >> $GITHUB_STEP_SUMMARY
           echo "- **Sample percentage:** $SAMPLE_PERCENTAGE%" >> $GITHUB_STEP_SUMMARY
           echo "- **Files copied:** $FILES_COPIED" >> $GITHUB_STEP_SUMMARY
           echo "- **Rsync time:** ${RSYNC_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
-          echo "### Rsync Performance Test - Second Run (after warmup) (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Source directory:** $SYNC_SUBTREE" >> $GITHUB_STEP_SUMMARY
-          echo "- **Sample percentage:** $SAMPLE_PERCENTAGE%" >> $GITHUB_STEP_SUMMARY
-          echo "- **Files copied:** $FILES_COPIED" >> $GITHUB_STEP_SUMMARY
-          echo "- **Rsync time:** ${RSYNC_TIME}s" >> $GITHUB_STEP_SUMMARY
-          echo "- **Total time:** ${TOTAL_TIME}s" >> $GITHUB_STEP_SUMMARY
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **Azure VM SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Azure Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
           fi
-      - name: Send first-run metrics to Datadog
+      - name: Send metrics to Datadog
         if: always()
         uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
         with:
@@ -2327,30 +2252,15 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:first"
-      - name: Send metrics to Datadog
-        if: always()
-        uses: masci/datadog@6889e9d060f5368eeee51f8a3f06a52f65d04da3
-        with:
-          api-key: ${{ secrets.DATADOG_API_KEY }}
-          metrics: |
-            - type: "gauge"
-              name: "hosted_compute.performance_test.rsync.time_s"
-              value: ${{ steps.timing.outputs.rsync_time || '0' }}
-              tags:
-                - "runner:${{ matrix.runner }}"
-                - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
-                - "azure_region:${{ steps.azure.outputs.azure_region }}"
-                - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "run:second"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   apt_package_install_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
       package_name: ${{ steps.test.outputs.package_name }}
       install_time: ${{ steps.test.outputs.install_time }}
@@ -2365,16 +2275,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -2410,8 +2333,8 @@ jobs:
           echo "package_size_mb=$PKG_SIZE_MB" >> $GITHUB_OUTPUT
           echo "download_speed_mb_per_s=$DOWNLOAD_SPEED" >> $GITHUB_OUTPUT
 
-          echo "### APT Package Installation Test Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### APT Package Installation Test Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Package:** $APT_PACKAGE" >> $GITHUB_STEP_SUMMARY
           echo "- **Installation time:** ${INSTALL_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Package size:** ${PKG_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
@@ -2436,15 +2359,16 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
                 - "package:${{ steps.test.outputs.package_name }}"
 
   nodejs_build_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
       clone_time: ${{ steps.timing.outputs.clone_time }}
       install_time: ${{ steps.timing.outputs.install_time }}
@@ -2462,16 +2386,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -2557,8 +2494,8 @@ jobs:
           echo "package_manager=$PACKAGE_MANAGER" >> $GITHUB_OUTPUT
           echo "dependencies_count=$DEPENDENCIES_COUNT" >> $GITHUB_OUTPUT
 
-          echo "### Node.js Build Performance Results (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Node.js Build Performance Results (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository:** ${{ steps.clone_timing.outputs.nodejs_repo }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Package Manager:** $PACKAGE_MANAGER" >> $GITHUB_STEP_SUMMARY
           echo "- **Dependencies Count:** $DEPENDENCIES_COUNT" >> $GITHUB_STEP_SUMMARY
@@ -2586,6 +2523,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.build.nodejs.install_time_s"
               value: ${{ steps.timing.outputs.install_time || '0' }}
@@ -2594,14 +2532,15 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   go_build_test:
     strategy:
       matrix:
-        runner: [ubuntu-latest]
+        runner: ${{ fromJson(needs.generate-runners.outputs.matrix) }}
       fail-fast: false
     runs-on: ${{ matrix.runner }}
-    needs: system_info
+    needs: [generate-runners, system_info]
     outputs:
       clone_time: ${{ steps.timing.outputs.clone_time }}
       build_time: ${{ steps.timing.outputs.build_time }}
@@ -2618,16 +2557,29 @@ jobs:
       - name: Get Azure metadata
         id: azure
         run: |
-          AZURE_VM_SKU=""
-          AZURE_REGION=""
+          VM_SKU=""
+          REGION=""
 
-          if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > azure_metadata.json 2>/dev/null; then
-            AZURE_VM_SKU=$(jq -r '.compute.vmSize // ""' azure_metadata.json 2>/dev/null || echo "")
-            AZURE_REGION=$(jq -r '.compute.location // ""' azure_metadata.json 2>/dev/null || echo "")
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
+            if [[ -n "$TOKEN" ]]; then
+              VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
+              REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+            fi
+          else
+            if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
+                "http://169.254.169.254/metadata/instance?api-version=2021-02-01" > cloud_metadata.json 2>/dev/null; then
+              VM_SKU=$(jq -r '.compute.vmSize // ""' cloud_metadata.json 2>/dev/null || echo "")
+              REGION=$(jq -r '.compute.location // ""' cloud_metadata.json 2>/dev/null || echo "")
+            fi
           fi
 
-          echo "azure_vm_sku=$AZURE_VM_SKU" >> $GITHUB_OUTPUT
-          echo "azure_region=$AZURE_REGION" >> $GITHUB_OUTPUT
+          echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
+          echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
@@ -2646,8 +2598,8 @@ jobs:
           echo "go_repo=$GO_REPO" >> $GITHUB_OUTPUT
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
 
-          echo "### Go Build Performance Test (${{ matrix.runner }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** ${{ matrix.runner }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Go Build Performance Test (ubuntu-24.04-aws)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** ubuntu-24.04-aws" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository:** $GO_REPO" >> $GITHUB_STEP_SUMMARY
 
       - name: Time Go build operations
@@ -2719,6 +2671,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.build.go.total_time_s"
               value: ${{ steps.timing.outputs.total_time || '0' }}
@@ -2727,10 +2680,11 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   performance_summary:
     runs-on: ubuntu-latest
-    needs: [system_info, single_core_cpu, multi_core_cpu, memory_test, fio_disk_test, artifact_upload_test, artifact_download_test, cache_upload_test, cache_download_test, checkout_performance_test, docker_build_test, docker_build_test_cached, finish-queue-test, network_bandwidth_test, rsync_performance_test, apt_package_install_test, nodejs_build_test, go_build_test]
+    needs: [system_info, single_core_cpu, multi_core_cpu, memory_test, fio_disk_test, artifact_upload_test, artifact_download_test, cache_upload_test, cache_download_test, checkout_performance_test, docker_build_remote, docker_build_remote_cached, docker_build_local_storage, finish-queue-test, network_bandwidth_test, rsync_performance_test, apt_package_install_test, nodejs_build_test, go_build_test, generate-runners]
     if: always()
     steps:
       - name: Generate performance summary
@@ -2739,12 +2693,11 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Test Date:** $(date)" >> $GITHUB_STEP_SUMMARY
           echo "**Test Duration:** ${{ env.TEST_DURATION }} seconds per test" >> $GITHUB_STEP_SUMMARY
-          echo "**Runners tested:** ubuntu-latest" >> $GITHUB_STEP_SUMMARY
+          echo "**Runners tested:** ${{ github.event.inputs.runners || 'both' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           echo "## 📊 Performance Results" >> $GITHUB_STEP_SUMMARY
           echo "> Results for each test appear above in the individual job summaries, broken down per runner." >> $GITHUB_STEP_SUMMARY
-          echo "> **Note:** CPU, Memory, Disk, Network, and Rsync tests include a 5-minute warmup between first and second runs to measure Azure VM warm-up impact." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           echo "### ✅ Job Results" >> $GITHUB_STEP_SUMMARY
@@ -2760,8 +2713,9 @@ jobs:
           echo "| Cache Save | ${{ needs.cache_upload_test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Cache Restore | ${{ needs.cache_download_test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Checkout | ${{ needs.checkout_performance_test.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker Build | ${{ needs.docker_build_test.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker Build (Cached) | ${{ needs.docker_build_test_cached.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build (Remote) | ${{ needs.docker_build_remote.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build (Remote Cached) | ${{ needs.docker_build_remote_cached.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build (Local Storage) | ${{ needs.docker_build_local_storage.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Queue Test | ${{ needs.finish-queue-test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Network Bandwidth | ${{ needs.network_bandwidth_test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Rsync | ${{ needs.rsync_performance_test.result }} |" >> $GITHUB_STEP_SUMMARY
@@ -2802,8 +2756,9 @@ jobs:
               "cache_upload_test": "${{ needs.cache_upload_test.result }}",
               "cache_download_test": "${{ needs.cache_download_test.result }}",
               "checkout_performance_test": "${{ needs.checkout_performance_test.result }}",
-              "docker_build_test": "${{ needs.docker_build_test.result }}",
-              "docker_build_test_cached": "${{ needs.docker_build_test_cached.result }}",
+              "docker_build_remote": "${{ needs.docker_build_remote.result }}",
+              "docker_build_remote_cached": "${{ needs.docker_build_remote_cached.result }}",
+              "docker_build_local_storage": "${{ needs.docker_build_local_storage.result }}",
               "finish_queue_test": "${{ needs.finish-queue-test.result }}",
               "network_bandwidth_test": "${{ needs.network_bandwidth_test.result }}",
               "rsync_performance_test": "${{ needs.rsync_performance_test.result }}",
