@@ -126,18 +126,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -209,18 +209,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -351,18 +351,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -495,18 +495,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -629,18 +629,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -856,18 +856,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -1015,18 +1015,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -1164,18 +1164,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -1324,18 +1324,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -1491,18 +1491,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -1635,18 +1635,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -1820,18 +1820,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -1982,18 +1982,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -2154,18 +2154,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -2288,18 +2288,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -2441,18 +2441,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -2568,18 +2568,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -2700,18 +2700,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
@@ -2889,18 +2889,18 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
               INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
-                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
-                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                EBS_INFO=$(aws ec2 describe-volumes \
+                  --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
+                  --region "$REGION" \
+                  --query "Volumes[0].{Iops:Iops,Throughput:Throughput}" \
                   --output text 2>/dev/null || echo "")
-                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
-                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
-                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
-                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
-                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
-                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
-                  fi
+                EBS_IOPS=$(echo "$EBS_INFO" | awk '{print $1}')
+                EBS_THROUGHPUT=$(echo "$EBS_INFO" | awk '{print $2}')
+                if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                  EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
                 fi
               fi
             fi
