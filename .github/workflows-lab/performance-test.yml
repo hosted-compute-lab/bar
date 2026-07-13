@@ -298,6 +298,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.single_core.avg_latency_ms"
               value: ${{ steps.test.outputs.avg_latency_first }}
@@ -306,6 +307,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.single_core.max_latency_ms"
               value: ${{ steps.test.outputs.max_latency_first }}
@@ -314,6 +316,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   multi_core_cpu:
     strategy:
@@ -443,6 +446,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.multi_core.avg_latency_ms"
               value: ${{ steps.test.outputs.avg_latency_first }}
@@ -451,6 +455,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.multi_core.max_latency_ms"
               value: ${{ steps.test.outputs.max_latency_first }}
@@ -459,6 +464,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   memory_test:
     strategy:
@@ -581,6 +587,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.memory.transfer_rate_mb_s"
               value: ${{ steps.test.outputs.transfer_rate_first || '0' }}
@@ -589,6 +596,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   fio_disk_test:
     strategy:
@@ -764,6 +772,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_write_iops"
               value: ${{ steps.test.outputs.sequential_write_iops_first || '0' }}
@@ -772,6 +781,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_read_iops"
               value: ${{ steps.test.outputs.random_read_iops_first || '0' }}
@@ -780,6 +790,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_write_iops"
               value: ${{ steps.test.outputs.random_write_iops_first || '0' }}
@@ -788,6 +799,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_read_bw_mb_s"
               value: ${{ steps.test.outputs.sequential_read_bandwidth_first || '0' }}
@@ -796,6 +808,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_write_bw_mb_s"
               value: ${{ steps.test.outputs.sequential_write_bandwidth_first || '0' }}
@@ -804,6 +817,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_read_latency_us"
               value: ${{ steps.test.outputs.random_read_latency_first || '0' }}
@@ -812,6 +826,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_write_latency_us"
               value: ${{ steps.test.outputs.random_write_latency_first || '0' }}
@@ -820,6 +835,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   artifact_upload_test:
     strategy:
@@ -972,6 +988,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.artifact.upload_time_s"
               value: ${{ steps.upload_timing.outputs.upload_time || '0' }}
@@ -980,6 +997,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   artifact_download_test:
     strategy:
@@ -1120,6 +1138,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.artifact.download_time_s"
               value: ${{ steps.compute_stats.outputs.download_time || '0' }}
@@ -1128,6 +1147,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   cache_upload_test:
     strategy:
@@ -1279,6 +1299,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cache.upload_time_s"
               value: ${{ steps.cache_timing.outputs.cache_save_time || '0' }}
@@ -1287,6 +1308,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
 
   cache_download_test:
@@ -1446,6 +1468,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cache.download_time_s"
               value: ${{ steps.cache_timing.outputs.cache_restore_time || '0' }}
@@ -1454,6 +1477,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   checkout_performance_test:
     strategy:
@@ -1589,6 +1613,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.checkout.speed_mb_per_min"
               value: ${{ steps.metrics.outputs.checkout_speed_mb_per_min || '0' }}
@@ -1597,6 +1622,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   docker_build_remote:
     strategy:
@@ -1772,6 +1798,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
                 - "cached:false"
             - type: "gauge"
               name: "hosted_compute.performance_test.docker.total_time_s"
@@ -1781,6 +1808,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
                 - "cached:false"
 
   docker_build_remote_cached:
@@ -1945,6 +1973,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
                 - "cached:true"
 
 
@@ -2082,6 +2111,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.docker.local_storage_build_speed_mb_per_min"
               value: ${{ steps.timing.outputs.build_speed_mb_per_min || '0' }}
@@ -2090,6 +2120,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   generate-matrix:
     runs-on: ubuntu-latest
@@ -2390,6 +2421,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.network.upload_mb_s"
               value: ${{ steps.test.outputs.upload_speed_mbps_first || '0' }}
@@ -2398,6 +2430,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.network.ping_ms"
               value: ${{ steps.test.outputs.ping_ms_first || '0' }}
@@ -2406,6 +2439,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   rsync_performance_test:
     strategy:
@@ -2532,6 +2566,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   apt_package_install_test:
     strategy:
@@ -2660,6 +2695,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
                 - "package:${{ steps.test.outputs.package_name }}"
 
   nodejs_build_test:
@@ -2843,6 +2879,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.build.nodejs.install_time_s"
               value: ${{ steps.timing.outputs.install_time || '0' }}
@@ -2851,6 +2888,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   go_build_test:
     strategy:
@@ -3009,6 +3047,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.build.go.total_time_s"
               value: ${{ steps.timing.outputs.total_time || '0' }}
@@ -3017,6 +3056,7 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
+                - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
 
   performance_summary:
     runs-on: ubuntu-latest
