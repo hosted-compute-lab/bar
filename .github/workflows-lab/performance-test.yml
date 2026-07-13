@@ -215,7 +215,7 @@ jobs:
         run: |
           # Wait for any background apt operations to release the lock
           sudo systemctl stop unattended-upgrades apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
-          sudo flock /var/lib/dpkg/lock-frontend --timeout 60 apt-get update
+          sudo flock --timeout 60 /var/lib/dpkg/lock-frontend apt-get update
           sudo apt-get install -y sysbench
 
       - name: Run single-core CPU test
@@ -340,7 +340,7 @@ jobs:
         run: |
           # Wait for any background apt operations to release the lock
           sudo systemctl stop unattended-upgrades apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
-          sudo flock /var/lib/dpkg/lock-frontend --timeout 60 apt-get update
+          sudo flock --timeout 60 /var/lib/dpkg/lock-frontend apt-get update
           sudo apt-get install -y sysbench
 
       - name: Run multi-core CPU test
@@ -467,7 +467,7 @@ jobs:
         run: |
           # Wait for any background apt operations to release the lock
           sudo systemctl stop unattended-upgrades apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
-          sudo flock /var/lib/dpkg/lock-frontend --timeout 60 apt-get update
+          sudo flock --timeout 60 /var/lib/dpkg/lock-frontend apt-get update
           sudo apt-get install -y sysbench
 
       - name: Run memory performance test
@@ -583,7 +583,7 @@ jobs:
         run: |
           # Wait for any background apt operations to release the lock
           sudo systemctl stop unattended-upgrades apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
-          sudo flock /var/lib/dpkg/lock-frontend --timeout 60 apt-get update
+          sudo flock --timeout 60 /var/lib/dpkg/lock-frontend apt-get update
           sudo apt-get install -y fio
 
       - name: Run FIO disk performance tests
@@ -2068,7 +2068,7 @@ jobs:
         run: |
           # Wait for any background apt operations to release the lock
           sudo systemctl stop unattended-upgrades apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
-          sudo flock /var/lib/dpkg/lock-frontend --timeout 60 apt-get update
+          sudo flock --timeout 60 /var/lib/dpkg/lock-frontend apt-get update
           sudo apt-get install -y speedtest-cli
 
       - name: Run network bandwidth test
@@ -2315,7 +2315,7 @@ jobs:
 
           # Wait for any background apt operations to release the lock
           sudo systemctl stop unattended-upgrades apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
-          sudo flock /var/lib/dpkg/lock-frontend --timeout 60 apt-get update
+          sudo flock --timeout 60 /var/lib/dpkg/lock-frontend apt-get update
 
           PKG_SIZE_KB=$(apt-cache show "$APT_PACKAGE" | grep "^Size: " | head -n1 | awk '{print $2}')
           if [[ -n "$PKG_SIZE_KB" ]]; then
