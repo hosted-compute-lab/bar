@@ -154,7 +154,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Get hardware information
         run: |
@@ -237,7 +237,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Install sysbench
         run: |
@@ -379,7 +379,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Install sysbench
         run: |
@@ -523,7 +523,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Install sysbench
         run: |
@@ -657,7 +657,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Install FIO
         run: |
@@ -884,7 +884,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Generate test file
         id: generate
@@ -1043,7 +1043,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Start download timing
         run: |
@@ -1192,7 +1192,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Generate cache test file
         id: generate
@@ -1352,7 +1352,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Prepare cache restore timing
         run: |
@@ -1519,7 +1519,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Start checkout timing
         run: |
@@ -1663,7 +1663,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -1848,7 +1848,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -2010,7 +2010,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Reset Docker state (fully cold, all runners)
         run: |
@@ -2182,7 +2182,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Analyze queue times
         id: analyze
@@ -2316,7 +2316,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Install speedtest-cli
         run: |
@@ -2469,7 +2469,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Run rsync performance test
         id: timing
@@ -2596,7 +2596,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Test APT package installation performance
         id: test
@@ -2728,7 +2728,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Setup timing
         id: clone_timing
@@ -2917,7 +2917,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
-          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
 
       - name: Install Go
         uses: actions/setup-go@v5
