@@ -62,11 +62,6 @@ on:
           - both
           - aws-only
           - azure-only
-      ebs_max:
-        description: 'EBS provisioned at max tier - aws only'
-        required: false
-        default: false
-        type: boolean
 
   schedule:
     - cron: '0 * * * *'  
@@ -74,7 +69,6 @@ on:
 env:
   TEST_DURATION: ${{ github.event.inputs.test_duration || '60' }}
   FILE_SIZE: ${{ github.event.inputs.file_size || '2' }}
-  EBS_CONFIG: ${{ github.event.inputs.ebs_max == 'true' && '37500iops_1250mb' || '3000iops_125mb' }}
 
 permissions:
   actions: read
@@ -130,6 +124,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -144,6 +154,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Get hardware information
         run: |
@@ -196,6 +207,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -210,6 +237,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Install sysbench
         run: |
@@ -240,6 +268,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Events per second:** $EVENTS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
@@ -267,7 +298,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.single_core.avg_latency_ms"
               value: ${{ steps.test.outputs.avg_latency_first }}
@@ -276,7 +306,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.single_core.max_latency_ms"
               value: ${{ steps.test.outputs.max_latency_first }}
@@ -285,7 +314,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   multi_core_cpu:
     strategy:
@@ -321,6 +349,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -335,6 +379,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Install sysbench
         run: |
@@ -368,6 +413,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Events per second:** $EVENTS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Total time:** ${TOTAL_TIME_FIRST}s" >> $GITHUB_STEP_SUMMARY
@@ -395,7 +443,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.multi_core.avg_latency_ms"
               value: ${{ steps.test.outputs.avg_latency_first }}
@@ -404,7 +451,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.multi_core.max_latency_ms"
               value: ${{ steps.test.outputs.max_latency_first }}
@@ -413,7 +459,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   memory_test:
     strategy:
@@ -448,6 +493,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -462,6 +523,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Install sysbench
         run: |
@@ -490,6 +552,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Total operations:** $TOTAL_OPS_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Operations per second:** $OPS_PER_SEC_FIRST" >> $GITHUB_STEP_SUMMARY
@@ -516,7 +581,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.memory.transfer_rate_mb_s"
               value: ${{ steps.test.outputs.transfer_rate_first || '0' }}
@@ -525,7 +589,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   fio_disk_test:
     strategy:
@@ -564,6 +627,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -578,6 +657,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Install FIO
         run: |
@@ -650,6 +730,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Sequential Read IOPS:** $SEQ_READ_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
           echo "- **Sequential Write IOPS:** $SEQ_WRITE_IOPS_FIRST" >> $GITHUB_STEP_SUMMARY
@@ -681,7 +764,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_write_iops"
               value: ${{ steps.test.outputs.sequential_write_iops_first || '0' }}
@@ -690,7 +772,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_read_iops"
               value: ${{ steps.test.outputs.random_read_iops_first || '0' }}
@@ -699,7 +780,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_write_iops"
               value: ${{ steps.test.outputs.random_write_iops_first || '0' }}
@@ -708,7 +788,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_read_bw_mb_s"
               value: ${{ steps.test.outputs.sequential_read_bandwidth_first || '0' }}
@@ -717,7 +796,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_write_bw_mb_s"
               value: ${{ steps.test.outputs.sequential_write_bandwidth_first || '0' }}
@@ -726,7 +804,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_read_latency_us"
               value: ${{ steps.test.outputs.random_read_latency_first || '0' }}
@@ -735,7 +812,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_write_latency_us"
               value: ${{ steps.test.outputs.random_write_latency_first || '0' }}
@@ -744,7 +820,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   artifact_upload_test:
     strategy:
@@ -779,6 +854,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -793,6 +884,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Generate test file
         id: generate
@@ -818,6 +910,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **File generation time:** ${FILE_GENERATION_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
@@ -877,7 +972,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.artifact.upload_time_s"
               value: ${{ steps.upload_timing.outputs.upload_time || '0' }}
@@ -886,7 +980,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   artifact_download_test:
     strategy:
@@ -920,6 +1013,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -934,6 +1043,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Start download timing
         run: |
@@ -983,6 +1093,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Download time:** ${DOWNLOAD_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Verification time:** ${VERIFICATION_TIME}s" >> $GITHUB_STEP_SUMMARY
@@ -1007,7 +1120,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.artifact.download_time_s"
               value: ${{ steps.compute_stats.outputs.download_time || '0' }}
@@ -1016,7 +1128,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   cache_upload_test:
     strategy:
@@ -1051,6 +1162,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -1065,6 +1192,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Generate cache test file
         id: generate
@@ -1091,6 +1219,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **File generation time:** ${FILE_GENERATION_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **File size:** ${FILE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
@@ -1148,7 +1279,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cache.upload_time_s"
               value: ${{ steps.cache_timing.outputs.cache_save_time || '0' }}
@@ -1157,7 +1287,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
 
   cache_download_test:
@@ -1193,6 +1322,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -1207,6 +1352,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Prepare cache restore timing
         run: |
@@ -1233,6 +1379,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Cache restore time:** ${CACHE_RESTORE_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Cache hit:** ${{ steps.cache_restore.outputs.cache-hit }}" >> $GITHUB_STEP_SUMMARY
@@ -1297,7 +1446,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cache.download_time_s"
               value: ${{ steps.cache_timing.outputs.cache_restore_time || '0' }}
@@ -1306,7 +1454,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   checkout_performance_test:
     strategy:
@@ -1342,6 +1489,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -1356,6 +1519,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Start checkout timing
         run: |
@@ -1400,6 +1564,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Repository:** $CHECKOUT_REPO" >> $GITHUB_STEP_SUMMARY
           echo "- **Checkout time:** ${CHECKOUT_TIME}s" >> $GITHUB_STEP_SUMMARY
@@ -1422,7 +1589,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.checkout.speed_mb_per_min"
               value: ${{ steps.metrics.outputs.checkout_speed_mb_per_min || '0' }}
@@ -1431,7 +1597,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   docker_build_remote:
     strategy:
@@ -1468,6 +1633,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -1482,6 +1663,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -1564,6 +1746,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Repository:** ${{ steps.clone_timing.outputs.docker_repo }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Clone time:** ${CLONE_TIME}s" >> $GITHUB_STEP_SUMMARY
@@ -1587,7 +1772,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
                 - "cached:false"
             - type: "gauge"
               name: "hosted_compute.performance_test.docker.total_time_s"
@@ -1597,7 +1781,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
                 - "cached:false"
 
   docker_build_remote_cached:
@@ -1635,6 +1818,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -1649,6 +1848,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -1719,6 +1919,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Repository:** ${{ steps.clone_timing.outputs.docker_repo }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Clone time:** ${CLONE_TIME}s" >> $GITHUB_STEP_SUMMARY
@@ -1742,7 +1945,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
                 - "cached:true"
 
 
@@ -1778,6 +1980,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -1792,6 +2010,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Reset Docker state (fully cold, all runners)
         run: |
@@ -1838,6 +2057,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Build time (real):** ${BUILD_TIME}s" >> $GITHUB_STEP_SUMMARY
           echo "- **Image size:** ${IMAGE_SIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
@@ -1860,7 +2082,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.docker.local_storage_build_speed_mb_per_min"
               value: ${{ steps.timing.outputs.build_speed_mb_per_min || '0' }}
@@ -1869,7 +2090,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   generate-matrix:
     runs-on: ubuntu-latest
@@ -1932,6 +2152,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -1946,6 +2182,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Analyze queue times
         id: analyze
@@ -2049,6 +2286,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -2063,6 +2316,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Install speedtest-cli
         run: |
@@ -2106,6 +2360,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Download speed:** ${DOWNLOAD_SPEED_MBPS_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
           echo "- **Upload speed:** ${UPLOAD_SPEED_MBPS_FIRST} MB/s" >> $GITHUB_STEP_SUMMARY
@@ -2133,7 +2390,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.network.upload_mb_s"
               value: ${{ steps.test.outputs.upload_speed_mbps_first || '0' }}
@@ -2142,7 +2398,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.network.ping_ms"
               value: ${{ steps.test.outputs.ping_ms_first || '0' }}
@@ -2151,7 +2406,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   rsync_performance_test:
     strategy:
@@ -2185,6 +2439,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -2199,6 +2469,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Run rsync performance test
         id: timing
@@ -2238,6 +2509,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Source directory:** $SYNC_SUBTREE" >> $GITHUB_STEP_SUMMARY
           echo "- **Sample percentage:** $SAMPLE_PERCENTAGE%" >> $GITHUB_STEP_SUMMARY
@@ -2258,7 +2532,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   apt_package_install_test:
     strategy:
@@ -2293,6 +2566,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -2307,6 +2596,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Test APT package installation performance
         id: test
@@ -2346,6 +2636,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Package:** $APT_PACKAGE" >> $GITHUB_STEP_SUMMARY
           echo "- **Installation time:** ${INSTALL_TIME}s" >> $GITHUB_STEP_SUMMARY
@@ -2367,7 +2660,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
                 - "package:${{ steps.test.outputs.package_name }}"
 
   nodejs_build_test:
@@ -2406,6 +2698,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -2420,6 +2728,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Setup timing
         id: clone_timing
@@ -2507,6 +2816,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Repository:** ${{ steps.clone_timing.outputs.nodejs_repo }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Package Manager:** $PACKAGE_MANAGER" >> $GITHUB_STEP_SUMMARY
@@ -2531,7 +2843,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.build.nodejs.install_time_s"
               value: ${{ steps.timing.outputs.install_time || '0' }}
@@ -2540,7 +2851,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   go_build_test:
     strategy:
@@ -2577,6 +2887,22 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
               REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/placement/region" 2>/dev/null || echo "")
+              INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
+              if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
+                VOLUME_ID=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --region "$REGION" \
+                  --query "Reservations[0].Instances[0].BlockDeviceMappings[0].Ebs.VolumeId" \
+                  --output text 2>/dev/null || echo "")
+                if [[ -n "$VOLUME_ID" && "$VOLUME_ID" != "None" ]]; then
+                  EBS_IOPS=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Iops" --output text 2>/dev/null || echo "")
+                  EBS_THROUGHPUT=$(aws ec2 describe-volumes --volume-ids "$VOLUME_ID" --region "$REGION" \
+                    --query "Volumes[0].Throughput" --output text 2>/dev/null || echo "")
+                  if [[ -n "$EBS_IOPS" && "$EBS_IOPS" != "None" && -n "$EBS_THROUGHPUT" && "$EBS_THROUGHPUT" != "None" ]]; then
+                    EBS_CONFIG="${EBS_IOPS}iops_${EBS_THROUGHPUT}mb"
+                  fi
+                fi
+              fi
             fi
           else
             if curl -s -H "Metadata:true" --noproxy "*" --max-time 5 \
@@ -2591,6 +2917,7 @@ jobs:
 
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
+          echo "ebs_config=${EBS_CONFIG:-}" >> $GITHUB_OUTPUT
 
       - name: Install Go
         uses: actions/setup-go@v5
@@ -2611,6 +2938,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${{ steps.azure.outputs.ebs_config }}" ]]; then
+              echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           echo "- **Repository:** $GO_REPO" >> $GITHUB_STEP_SUMMARY
 
@@ -2679,7 +3009,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.build.go.total_time_s"
               value: ${{ steps.timing.outputs.total_time || '0' }}
@@ -2688,7 +3017,6 @@ jobs:
                 - "azure_vm_sku:${{ steps.azure.outputs.azure_vm_sku }}"
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
-                - "ebs_config:${{ contains(matrix.runner, 'aws') && env.EBS_CONFIG || 'n/a' }}"
 
   performance_summary:
     runs-on: ubuntu-latest
