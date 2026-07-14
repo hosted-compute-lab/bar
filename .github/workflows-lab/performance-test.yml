@@ -109,11 +109,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -149,6 +151,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -192,11 +197,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -232,6 +239,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -337,11 +347,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -377,6 +389,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -484,11 +499,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -524,6 +541,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -620,11 +640,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -660,6 +682,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -855,11 +880,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -895,6 +922,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1016,11 +1046,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -1056,6 +1088,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1167,11 +1202,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -1207,6 +1244,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1329,11 +1369,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -1369,6 +1411,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1498,11 +1543,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -1538,6 +1585,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1644,11 +1694,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -1684,6 +1736,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1831,11 +1886,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -1871,6 +1928,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1994,11 +2054,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -2034,6 +2096,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2168,11 +2233,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -2208,6 +2275,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2302,11 +2372,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -2342,6 +2414,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2458,11 +2533,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -2498,6 +2575,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2586,11 +2666,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -2626,6 +2708,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2719,11 +2804,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -2759,6 +2846,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2910,11 +3000,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get Azure metadata
+      - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
             TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
@@ -2950,6 +3042,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
