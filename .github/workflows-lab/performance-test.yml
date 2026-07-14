@@ -112,18 +112,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -154,6 +151,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -200,18 +200,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -242,6 +239,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -350,18 +350,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -392,6 +389,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -502,18 +502,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -544,6 +541,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -643,18 +643,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -685,6 +682,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -883,18 +883,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -925,6 +922,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1049,18 +1049,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -1091,6 +1088,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1205,18 +1205,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -1247,6 +1244,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1372,18 +1372,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -1414,6 +1411,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1546,18 +1546,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -1588,6 +1585,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1697,18 +1697,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -1739,6 +1736,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -1889,18 +1889,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -1931,6 +1928,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2057,18 +2057,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -2099,6 +2096,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2236,18 +2236,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -2278,6 +2275,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2375,18 +2375,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -2417,6 +2414,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2536,18 +2536,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -2578,6 +2575,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2669,18 +2669,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -2711,6 +2708,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -2807,18 +2807,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -2849,6 +2846,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
@@ -3003,18 +3003,15 @@ jobs:
       - name: Get metadata
         id: azure
         run: |
+          echo "Fetching metadata..."
           VM_SKU=""
           REGION=""
+          EBS_CONFIG=""
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            TOKEN=""
-            for attempt in 1 2 3 4 5; do
-              TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-                -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
-                --max-time 5 2>/dev/null || echo "")
-              [[ -n "$TOKEN" ]] && break
-              sleep 2
-            done
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+              --max-time 5 2>/dev/null || echo "")
             if [[ -n "$TOKEN" ]]; then
               VM_SKU=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/instance-type" 2>/dev/null || echo "")
@@ -3045,6 +3042,9 @@ jobs:
             fi
           fi
 
+          if [[ "${{ matrix.runner }}" == *aws* ]]; then
+            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+          fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
 
