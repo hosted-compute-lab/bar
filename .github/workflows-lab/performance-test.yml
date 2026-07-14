@@ -152,7 +152,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -240,7 +240,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -390,7 +390,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -542,7 +542,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -683,7 +683,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -923,7 +923,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -1089,7 +1089,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -1245,7 +1245,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -1412,7 +1412,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -1586,7 +1586,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -1737,7 +1737,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -1929,7 +1929,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2097,7 +2097,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2276,7 +2276,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2415,7 +2415,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2576,7 +2576,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2709,7 +2709,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2847,7 +2847,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -3043,7 +3043,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "Instance type: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
