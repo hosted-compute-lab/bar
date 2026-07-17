@@ -130,6 +130,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -160,6 +162,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Get hardware information
         run: |
@@ -218,6 +221,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -248,6 +253,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Install sysbench
         run: |
@@ -309,6 +315,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.single_core.avg_latency_ms"
               value: ${{ steps.test.outputs.avg_latency_first }}
@@ -318,6 +325,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.single_core.max_latency_ms"
               value: ${{ steps.test.outputs.max_latency_first }}
@@ -327,6 +335,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   multi_core_cpu:
     strategy:
@@ -368,6 +377,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -398,6 +409,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Install sysbench
         run: |
@@ -462,6 +474,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.multi_core.avg_latency_ms"
               value: ${{ steps.test.outputs.avg_latency_first }}
@@ -471,6 +484,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cpu.multi_core.max_latency_ms"
               value: ${{ steps.test.outputs.max_latency_first }}
@@ -480,6 +494,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   memory_test:
     strategy:
@@ -520,6 +535,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -550,6 +567,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Install sysbench
         run: |
@@ -608,6 +626,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.memory.transfer_rate_mb_s"
               value: ${{ steps.test.outputs.transfer_rate_first || '0' }}
@@ -617,6 +636,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   fio_disk_test:
     strategy:
@@ -661,6 +681,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -691,6 +713,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Install FIO
         run: |
@@ -798,6 +821,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_write_iops"
               value: ${{ steps.test.outputs.sequential_write_iops_first || '0' }}
@@ -807,6 +831,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_read_iops"
               value: ${{ steps.test.outputs.random_read_iops_first || '0' }}
@@ -816,6 +841,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_write_iops"
               value: ${{ steps.test.outputs.random_write_iops_first || '0' }}
@@ -825,6 +851,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_read_bw_mb_s"
               value: ${{ steps.test.outputs.sequential_read_bandwidth_first || '0' }}
@@ -834,6 +861,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.seq_write_bw_mb_s"
               value: ${{ steps.test.outputs.sequential_write_bandwidth_first || '0' }}
@@ -843,6 +871,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_read_latency_us"
               value: ${{ steps.test.outputs.random_read_latency_first || '0' }}
@@ -852,6 +881,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.disk.rand_write_latency_us"
               value: ${{ steps.test.outputs.random_write_latency_first || '0' }}
@@ -861,6 +891,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   artifact_upload_test:
     strategy:
@@ -901,6 +932,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -931,6 +964,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Generate test file
         id: generate
@@ -1019,6 +1053,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.artifact.upload_time_s"
               value: ${{ steps.upload_timing.outputs.upload_time || '0' }}
@@ -1028,6 +1063,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   artifact_download_test:
     strategy:
@@ -1067,6 +1103,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -1097,6 +1135,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Start download timing
         run: |
@@ -1174,6 +1213,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.artifact.download_time_s"
               value: ${{ steps.compute_stats.outputs.download_time || '0' }}
@@ -1183,6 +1223,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   cache_upload_test:
     strategy:
@@ -1223,6 +1264,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -1253,6 +1296,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Generate cache test file
         id: generate
@@ -1340,6 +1384,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cache.upload_time_s"
               value: ${{ steps.cache_timing.outputs.cache_save_time || '0' }}
@@ -1349,6 +1394,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
 
   cache_download_test:
@@ -1390,6 +1436,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -1420,6 +1468,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Prepare cache restore timing
         run: |
@@ -1514,6 +1563,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.cache.download_time_s"
               value: ${{ steps.cache_timing.outputs.cache_restore_time || '0' }}
@@ -1523,6 +1573,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   checkout_performance_test:
     strategy:
@@ -1564,6 +1615,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -1594,6 +1647,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Start checkout timing
         run: |
@@ -1664,6 +1718,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.checkout.speed_mb_per_min"
               value: ${{ steps.metrics.outputs.checkout_speed_mb_per_min || '0' }}
@@ -1673,6 +1728,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   docker_build_remote:
     strategy:
@@ -1715,6 +1771,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -1745,6 +1803,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -1854,6 +1913,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
                 - "cached:false"
             - type: "gauge"
               name: "hosted_compute.performance_test.docker.total_time_s"
@@ -1864,6 +1924,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
                 - "cached:false"
 
   docker_build_remote_cached:
@@ -1907,6 +1968,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -1937,6 +2000,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -2034,6 +2098,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
                 - "cached:true"
 
 
@@ -2075,6 +2140,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -2105,6 +2172,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Reset Docker state (fully cold, all runners)
         run: |
@@ -2177,6 +2245,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.docker.local_storage_build_speed_mb_per_min"
               value: ${{ steps.timing.outputs.build_speed_mb_per_min || '0' }}
@@ -2186,6 +2255,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   generate-matrix:
     runs-on: ubuntu-latest
@@ -2254,6 +2324,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -2284,6 +2356,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Analyze queue times
         id: analyze
@@ -2393,6 +2466,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -2423,6 +2498,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Install speedtest-cli
         run: |
@@ -2497,6 +2573,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.network.upload_mb_s"
               value: ${{ steps.test.outputs.upload_speed_mbps_first || '0' }}
@@ -2506,6 +2583,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.network.ping_ms"
               value: ${{ steps.test.outputs.ping_ms_first || '0' }}
@@ -2515,6 +2593,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   rsync_performance_test:
     strategy:
@@ -2554,6 +2633,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -2584,6 +2665,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Run rsync performance test
         id: timing
@@ -2647,6 +2729,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   apt_package_install_test:
     strategy:
@@ -2687,6 +2770,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -2717,6 +2802,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Test APT package installation performance
         id: test
@@ -2781,6 +2867,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
                 - "package:${{ steps.test.outputs.package_name }}"
 
   nodejs_build_test:
@@ -2825,6 +2912,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -2855,6 +2944,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Setup timing
         id: clone_timing
@@ -2970,6 +3060,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.build.nodejs.install_time_s"
               value: ${{ steps.timing.outputs.install_time || '0' }}
@@ -2979,6 +3070,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   go_build_test:
     strategy:
@@ -3021,6 +3113,8 @@ jobs:
                 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null || echo "")
               ROOT_DEVICE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
                 "http://169.254.169.254/latest/meta-data/block-device-mapping/root" 2>/dev/null || echo "")
+              AMI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" --max-time 5 \
+                "http://169.254.169.254/latest/meta-data/ami-id" 2>/dev/null || echo "")
               if [[ -n "$INSTANCE_ID" && -n "$REGION" ]]; then
                 EBS_INFO=$(aws ec2 describe-volumes \
                   --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device,Values=${ROOT_DEVICE:-/dev/sda1}" \
@@ -3051,6 +3145,7 @@ jobs:
           CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | sed "s/Model name:[[:space:]]*//" | xargs)
           echo "cpu_model=$CPU_MODEL" >> $GITHUB_OUTPUT
           echo "ebs_config=${EBS_CONFIG:-n/a}" >> $GITHUB_OUTPUT
+          echo "image_id=${AMI_ID:-}" >> $GITHUB_OUTPUT
 
       - name: Install Go
         uses: actions/setup-go@v5
@@ -3143,6 +3238,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
             - type: "gauge"
               name: "hosted_compute.performance_test.build.go.total_time_s"
               value: ${{ steps.timing.outputs.total_time || '0' }}
@@ -3152,6 +3248,7 @@ jobs:
                 - "azure_region:${{ steps.azure.outputs.azure_region }}"
                 - "cpu_model:${{ steps.azure.outputs.cpu_model }}"
                 - "ebs_config:${{ steps.azure.outputs.ebs_config }}"
+                - "image_id:${{ steps.azure.outputs.image_id }}"
 
   performance_summary:
     runs-on: ubuntu-latest
