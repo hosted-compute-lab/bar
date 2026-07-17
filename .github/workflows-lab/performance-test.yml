@@ -155,7 +155,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -246,7 +246,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -284,6 +284,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -402,7 +405,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -443,6 +446,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -560,7 +566,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -596,6 +602,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -706,7 +715,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -786,6 +795,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -957,7 +969,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -990,6 +1002,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -1128,7 +1143,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -1185,6 +1200,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -1289,7 +1307,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -1323,6 +1341,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -1461,7 +1482,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -1495,6 +1516,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -1640,7 +1664,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -1692,6 +1716,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -1796,7 +1823,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -1886,6 +1913,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -1993,7 +2023,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2071,6 +2101,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -2165,7 +2198,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2219,6 +2252,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -2349,7 +2385,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2491,7 +2527,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2542,6 +2578,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -2658,7 +2697,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2705,6 +2744,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -2795,7 +2837,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -2842,6 +2884,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -2937,7 +2982,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -3032,6 +3077,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
@@ -3138,7 +3186,7 @@ jobs:
           fi
 
           if [[ "${{ matrix.runner }}" == *aws* ]]; then
-            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a}"
+            echo "SKU: $VM_SKU | Region: $REGION | EBS: ${EBS_CONFIG:-n/a} | Image: ${AMI_ID}"
           fi
           echo "azure_vm_sku=$VM_SKU" >> $GITHUB_OUTPUT
           echo "azure_region=$REGION" >> $GITHUB_OUTPUT
@@ -3166,6 +3214,9 @@ jobs:
           if [[ -n "${{ steps.azure.outputs.azure_vm_sku }}" ]]; then
             echo "- **SKU:** ${{ steps.azure.outputs.azure_vm_sku }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Region:** ${{ steps.azure.outputs.azure_region }}" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ matrix.runner }}" == *aws* && -n "${{ steps.azure.outputs.image_id }}" ]]; then
+              echo "- **Image ID:** ${{ steps.azure.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+            fi
             if [[ "${{ matrix.runner }}" == *aws* ]]; then
               echo "- **EBS Config:** ${{ steps.azure.outputs.ebs_config }}" >> $GITHUB_STEP_SUMMARY
             fi
