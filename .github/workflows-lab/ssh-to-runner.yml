@@ -1,0 +1,17 @@
+name: Ssh-To-Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: label
+        default: ubuntu-24.04-aws
+
+env:
+  TERM: xterm
+
+jobs:
+  debug:
+    runs-on: ${{ inputs.label }}
+    steps:
+      - uses: paveliak/debug-it@v2
