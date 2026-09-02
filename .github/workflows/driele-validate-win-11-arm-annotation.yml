@@ -1,0 +1,17 @@
+name: Driele validate win-11-arm annotation
+on: workflow_dispatch
+jobs:
+  validate:
+    runs-on: windows-11-arm
+    steps:
+      - name: Which Visual Studio is installed?
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            Write-Host "vswhere.exe not found - no Visual Studio installer present"
+            exit 0
+          }
+          & $vswhere -products * -latest -property displayName
+          & $vswhere -products * -latest -property catalog_productDisplayVersion
+          & $vswhere -products * -latest -property installationPath
