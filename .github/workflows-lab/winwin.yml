@@ -1,50 +1,84 @@
 # Phase 1 probe for github/hosted-compute#4873
 #
+# WHAT THIS ROUND IS TESTING
+#   Run 34433333661 gave a clean within-SKU A/B on D4ads_v5 and found:
+#     sequential write   ephemeral 423 vs managed 422 MB/s   1.00x
+#     random 4 KiB QD1   ephemeral 7301 vs managed 8135      0.90x
+#     small-file create  ephemeral 1155 vs managed 4012      0.29x  (0.44x same-stamp)
+#     small-file delete  ephemeral 4980 vs managed 10519     0.47x
+#     tar extract        ephemeral 34 vs managed 72 MB/s     0.47x
+#
+#   Bandwidth and raw IOPS are identical; only metadata-heavy work regresses.
+#   That points away from the device and toward the VOLUME, because the two arms
+#   put the workspace in very different places:
+#     ephemeral -> C:  a system volume ~81% full (29 GB free of 149) holding the
+#                      Windows image and a large, well-used MFT
+#     managed   -> D:  a pristine, empty 147 GB temp volume
+#
+#   CONFOUNDED VARIABLES, to be explicit: "ephemeral vs managed" currently also
+#   means "system volume vs empty volume" AND possibly "4 KB vs 64 KB clusters"
+#   (Azure temp disks are frequently formatted with 64 KB clusters). The numbers
+#   above cannot separate these.
+#
+#   So this version runs the SAME small-file benchmark a second time against C:
+#   on VMs where the workspace is not already on C:, and records NTFS geometry
+#   for every volume. Decision table:
+#
+#     managed C: ~= ephemeral C: (~1.1-1.8k files/s), managed D: ~4k
+#         -> the penalty tracks the SYSTEM VOLUME across both disk types.
+#            Ephemeral is largely exonerated; fullness/MFT/cluster size is the
+#            cause, and image shrink or DiskSizeOverrideGB would address it.
+#
+#     managed C: ~= managed D: (~4k), ephemeral C: still ~1.1k
+#         -> the penalty tracks EPHEMERAL itself and the levers above will not
+#            help.
+#
+#   Residual caveat: managed C: is a remote Premium v1 managed OS disk while
+#   ephemeral C: is a local disk, so this is not a perfect isolation. It is
+#   still decisive for the question actually being asked, because a penalty that
+#   appears on C: under BOTH backing types cannot be an ephemeral-only effect.
+#
 # MEASUREMENT TRAP (this invalidated the first round of results)
 #   The original benchmark wrote 2 GB with a buffered [IO.File]::OpenWrite and
-#   stopped the clock at Close(). Close() flushes the .NET stream into the
-#   Windows page cache, NOT to the device, so on a 16 GB VM most of the write
-#   never reached disk before the timer stopped. That produced 539 MB/s on
-#   D4ads_v5, whose platform cap is 250 MB/s -- a physically impossible number.
+#   stopped the clock at Close(). Close() flushes into the Windows page cache,
+#   NOT to the device, so most of the write never reached disk before the timer
+#   stopped. That produced 539 MB/s on D4ads_v5, whose platform cap is 250 MB/s.
 #
-#   Every write below therefore uses FileOptions.WriteThrough plus an explicit
-#   Flush($true), and every result is reported as a percentage of the SKU's
-#   documented cap. Anything over ~105% of cap did not touch the device and is
-#   reported as CACHED(invalid) rather than silently believed.
+#   Every write below uses FileOptions.WriteThrough plus an explicit
+#   Flush($true), and results are scored against the SKU's documented cap.
 #
-# WHY THE CAPS MATTER FOR THE EPHEMERAL QUESTION
-#   For a given SKU the workspace volume has the SAME platform write budget in
-#   both arms:
-#     v5     managed D: = temp disk        250 MB/s (CombinedTempDiskAndCached)
-#            ephemeral C: = ResourceDisk    250 MB/s  -- same budget
-#     v6/v7  managed D: = local NVMe        NvmeMaxWriteBytesPerSecond
-#            ephemeral C: = ephemeral OS    same NVMe device, same cap
-#   So ephemeral is not handed a smaller budget. What changes is that ephemeral
-#   puts OS/paging traffic and scratch traffic on ONE device instead of two.
-#   Any real regression is contention, and no amount of DiskSizeOverrideGB
-#   changes it -- the cap is per-SKU, tied to vCPU count, not to disk size.
+# READING THE % OF CAP COLUMN
+#   WriteThrough bypasses the GUEST page cache. It cannot bypass the AZURE HOST
+#   cache, which fronts ResourceDisk-placement ephemeral disks (v5) but not
+#   direct-attach NVMe (v6/v7). That is why v5 legitimately reports ~170% of
+#   CombinedTempDiskAndCached while v6/v7 land at or below their NVMe caps.
+#   Over-cap on v5 is therefore EXPECTED and real, not a cache artifact; the
+#   1.5% CV across 21 samples confirms it. Treat >105% as "host-cached" rather
+#   than invalid, and note it may be burst rather than sustained.
 #
 # NO SYNTHETIC READ TEST, DELIBERATELY
-#   Read caps are 2x write caps on every allowlisted SKU (360/560 MB/s vs
-#   180/280), so writes bind first. A trustworthy read number needs
-#   FILE_FLAG_NO_BUFFERING with sector-aligned unmanaged buffers, which is a lot
-#   of fragile P/Invoke for a non-binding constraint. The tar extract step gives
-#   the composite read+write signal instead.
+#   Read caps are 2x write caps on every allowlisted SKU (360/560 vs 180/280),
+#   so writes bind first. A trustworthy read number needs FILE_FLAG_NO_BUFFERING
+#   with sector-aligned unmanaged buffers, which is fragile P/Invoke for a
+#   non-binding constraint. The tar extract gives the composite read+write signal.
 #
 # NOTE ON RENDERING: $GITHUB_STEP_SUMMARY is PER JOB. A separate "header" job
 # cannot supply the header row for other jobs' tables, so every job emits its
-# own complete table.
+# own complete tables.
 #
 # SETUP
 #   Use a PUBLIC repo (public routes to the `-small` config = D4 SKUs, which the
 #   flag can act on; private routes to `-default` = D2, never eligible).
 #   Configure ONE lab stamp ephemeral and leave the other managed, keeping the
-#   label identical so both arms share the job stream and pool warmth.
+#   label identical so both arms share the job stream and pool warmth. Both
+#   stamps converting to ephemeral destroys the control arm.
 #
 # READING RESULTS
 #     gh run view <id> --repo <owner>/<repo> --log | grep -o 'PROBE .*'
 #   Always group by EXACT sku, never by "v6/v7" -- v6 caps at 180 MB/s and v7 at
 #   280 MB/s, so pooling them injects a 1.56x spread before any real variance.
+#   create_fps is the noisiest metric (CV 41% ephemeral / 6% managed); prefer
+#   delete_fps and tar_mbps for conclusions.
 name: ephemeral-disk-probe
 on:
   workflow_dispatch:
@@ -98,8 +132,10 @@ jobs:
           $wsVol    = Get-Volume -DriveLetter $wsDrive
           $wsFree   = [math]::Round($wsVol.SizeRemaining/1GB,1)
           $wsSize   = [math]::Round($wsVol.Size/1GB,1)
+          $wsUsedPct = if ($wsVol.Size) { [math]::Round(100*(1-$wsVol.SizeRemaining/$wsVol.Size),0) } else { 0 }
           $cVol  = Get-Volume -DriveLetter C
           $cFree = [math]::Round($cVol.SizeRemaining/1GB,1)
+          $cUsedPct = if ($cVol.Size) { [math]::Round(100*(1-$cVol.SizeRemaining/$cVol.Size),0) } else { 0 }
           $dSize='n/a'; $dFree='n/a'
           if ($dPresent) {
             $dVol  = Get-Volume -DriveLetter D
@@ -118,12 +154,49 @@ jobs:
             Write-Host ("PART disk={0} part={1} letter={2} size_gb={3} type={4}" -f `
               $pt.DiskNumber, $pt.PartitionNumber, $pt.DriveLetter, [math]::Round($pt.Size/1GB,1), $pt.Type)
           }
+          # ---- NTFS geometry ----
+          # Cluster size is the leading alternative explanation for the
+          # small-file gap: Azure temp disks are commonly formatted with 64 KB
+          # clusters vs 4 KB on C:. MFT size indicates how much metadata the
+          # volume is already carrying.
+          function Get-NtfsGeometry([string]$letter) {
+            $r = [ordered]@{ cluster='?'; mftMB='?'; recSeg='?' }
+            try {
+              $raw = & fsutil fsinfo ntfsinfo "${letter}:" 2>$null
+              foreach ($l in $raw) {
+                # Hex first. A decimal-first pattern matches the leading "0" of
+                # an "0x..." value and silently reports 0.
+                if     ($l -match 'Bytes Per Cluster\s*:\s*0x([0-9a-fA-F]+)') { $r.cluster = [Convert]::ToInt64($Matches[1],16) }
+                elseif ($l -match 'Bytes Per Cluster\s*:\s*(\d+)')            { $r.cluster = [int]$Matches[1] }
+                if     ($l -match 'Bytes Per FileRecord Segment\s*:\s*0x([0-9a-fA-F]+)') { $r.recSeg = [Convert]::ToInt64($Matches[1],16) }
+                elseif ($l -match 'Bytes Per FileRecord Segment\s*:\s*(\d+)')            { $r.recSeg = [int]$Matches[1] }
+                if ($l -match 'Mft Valid Data Length\s*:\s*0x([0-9a-fA-F]+)') {
+                  $r.mftMB = [math]::Round([Convert]::ToInt64($Matches[1],16)/1MB,0)
+                }
+                elseif ($l -match 'Mft Valid Data Length\s*:\s*(\d+)') {
+                  $r.mftMB = [math]::Round([int64]$Matches[1]/1MB,0)
+                }
+              }
+            } catch { }
+            return $r
+          }
+          $geo = @{}
+          foreach ($v in (Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Fixed' })) {
+            $g = Get-NtfsGeometry $v.DriveLetter
+            $geo[[string]$v.DriveLetter] = $g
+            Write-Host ("NTFS vol={0}: cluster_bytes={1} filerecord_bytes={2} mft_mb={3} size_gb={4} free_gb={5}" -f `
+              $v.DriveLetter, $g.cluster, $g.recSeg, $g.mftMB,
+              [math]::Round($v.Size/1GB,1), [math]::Round($v.SizeRemaining/1GB,1))
+          }
+          $wsCluster = if ($geo.ContainsKey($wsDrive)) { $geo[$wsDrive].cluster } else { '?' }
+          $wsMft     = if ($geo.ContainsKey($wsDrive)) { $geo[$wsDrive].mftMB }   else { '?' }
+          $cCluster  = if ($geo.ContainsKey('C'))      { $geo['C'].cluster }      else { '?' }
+          $cMft      = if ($geo.ContainsKey('C'))      { $geo['C'].mftMB }        else { '?' }
           # ---- antivirus exclusion coverage ----
           # Moving the workspace from D:\a to C:\a changes the path, and if the
           # image carries a Defender exclusion for the old path the new one may
           # not be covered. That lands squarely on the small-file and tar
-          # numbers and would look exactly like a disk regression. Capture it so
-          # the two causes can be told apart.
+          # numbers and would look exactly like a disk regression.
           $wsExcluded='unknown'; $rtp='unknown'; $exclList='unknown'
           try {
             $mp = Get-MpPreference -ErrorAction Stop
@@ -137,6 +210,8 @@ jobs:
           # ---- platform write caps, from az vm list-skus (bytes/sec) ----
           # v5  = CombinedTempDiskAndCachedWriteBytesPerSecond (temp disk path)
           # v6+ = NvmeMaxWriteBytesPerSecond (local NVMe path)
+          # These describe the LOCAL disk. They do not describe a remote managed
+          # OS disk, so % of cap is only meaningful for the primary volume.
           $caps = @{
             'Standard_D4ads_v5' = 250000000
             'Standard_D4ds_v5'  = 250000000
@@ -149,116 +224,152 @@ jobs:
           $capBps = if ($caps.ContainsKey($sku)) { $caps[$sku] } else { 0 }
           # ================= perf harness =================
           # All throughput in decimal MB/s (10^6 bytes) to match Azure's units.
-          $seqMBps='n/a'; $seqPct='n/a'; $verdict='n/a'
-          $iops='n/a'; $createRate='n/a'; $deleteRate='n/a'; $tarMBps='n/a'
-          $bin = Join-Path $ws 'probe.bin'
-          $SEQ_MIB = 3072
-          $BLOCK   = 8MB
-          try {
-            # ---- 1. sequential write, WriteThrough ----
-            $buf = [byte[]]::new($BLOCK)
-            [Random]::new(42).NextBytes($buf)
-            $blocks = [int]($SEQ_MIB / ($BLOCK/1MB))
-            $fs = [IO.FileStream]::new($bin, [IO.FileMode]::Create, [IO.FileAccess]::Write,
-                                       [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
-            $sw = [Diagnostics.Stopwatch]::StartNew()
+          function Invoke-VolumeBench {
+            param([string]$Root, [int]$SeqMiB, [int]$RandOps, [int]$Files)
+            $r = [ordered]@{ seq='n/a'; iops='n/a'; create='n/a'; delete='n/a'; tar='n/a' }
+            $dir = Join-Path $Root ('bench-' + [guid]::NewGuid().ToString('N').Substring(0,8))
+            $bin = Join-Path $dir 'probe.bin'
+            $sfDir = Join-Path $dir 'smallfiles'
             try {
-              for ($i=0; $i -lt $blocks; $i++) { $fs.Write($buf,0,$buf.Length) }
-              $fs.Flush($true)
-            } finally { $fs.Dispose() }
-            $sw.Stop()
-            $bytes   = [long]$SEQ_MIB * 1MB
-            $bps     = $bytes / $sw.Elapsed.TotalSeconds
-            $seqMBps = [math]::Round($bps/1000000,1)
-            if ($capBps -gt 0) {
-              $seqPct = [math]::Round(100*$bps/$capBps,0)
-              $verdict = if ($seqPct -gt 105) { 'CACHED(invalid)' }
-                         elseif ($seqPct -ge 85) { 'at cap' }
-                         else { 'below cap' }
-            }
-            # ---- 2. random 4 KiB write IOPS, QD1, WriteThrough ----
-            # Latency-bound by design: QD1 will not reach NvmeMaxWriteIops
-            # (30,000). It is a fair A/B between arms, not a cap test.
-            $OPS = 5000
-            $sbuf = [byte[]]::new(4096)
-            [Random]::new(7).NextBytes($sbuf)
-            $rnd  = [Random]::new(11)
-            $maxBlk = [long]([math]::Floor($bytes/4096)) - 1
-            $fs = [IO.FileStream]::new($bin, [IO.FileMode]::Open, [IO.FileAccess]::Write,
-                                       [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
-            $sw = [Diagnostics.Stopwatch]::StartNew()
-            try {
-              for ($i=0; $i -lt $OPS; $i++) {
-                $fs.Position = [long]($rnd.NextDouble()*$maxBlk) * 4096
-                $fs.Write($sbuf,0,4096)
+              New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
+              # -- 1. sequential write, WriteThrough --
+              $BLOCK = 8MB
+              $buf = [byte[]]::new($BLOCK)
+              [Random]::new(42).NextBytes($buf)
+              $blocks = [int]($SeqMiB / ($BLOCK/1MB))
+              $fs = [IO.FileStream]::new($bin, [IO.FileMode]::Create, [IO.FileAccess]::Write,
+                                         [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
+              $sw = [Diagnostics.Stopwatch]::StartNew()
+              try {
+                for ($i=0; $i -lt $blocks; $i++) { $fs.Write($buf,0,$buf.Length) }
+                $fs.Flush($true)
+              } finally { $fs.Dispose() }
+              $sw.Stop()
+              $bytes = [long]$SeqMiB * 1MB
+              $r.seq = [math]::Round(($bytes/1000000)/$sw.Elapsed.TotalSeconds,1)
+              # -- 2. random 4 KiB write IOPS, QD1, WriteThrough --
+              # Latency-bound by design: QD1 will not reach NvmeMaxWriteIops
+              # (30,000). Fair A/B between arms, not a cap test.
+              $sbuf = [byte[]]::new(4096)
+              [Random]::new(7).NextBytes($sbuf)
+              $rnd = [Random]::new(11)
+              $maxBlk = [long]([math]::Floor($bytes/4096)) - 1
+              $fs = [IO.FileStream]::new($bin, [IO.FileMode]::Open, [IO.FileAccess]::Write,
+                                         [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
+              $sw = [Diagnostics.Stopwatch]::StartNew()
+              try {
+                for ($i=0; $i -lt $RandOps; $i++) {
+                  $fs.Position = [long]($rnd.NextDouble()*$maxBlk) * 4096
+                  $fs.Write($sbuf,0,4096)
+                }
+                $fs.Flush($true)
+              } finally { $fs.Dispose() }
+              $sw.Stop()
+              $r.iops = [math]::Round($RandOps/$sw.Elapsed.TotalSeconds,0)
+              Remove-Item $bin -Force -ErrorAction SilentlyContinue
+              # -- 3. many small files: the shape CI actually generates --
+              # git checkout, npm/nuget restore and actions/cache all create
+              # tens of thousands of small files. NTFS metadata + journal bound,
+              # not bandwidth bound. This is where the regression shows up.
+              New-Item -ItemType Directory -Path $sfDir -Force | Out-Null
+              $fbuf = [byte[]]::new(16384)
+              [Random]::new(3).NextBytes($fbuf)
+              $sw = [Diagnostics.Stopwatch]::StartNew()
+              for ($i=0; $i -lt $Files; $i++) {
+                [IO.File]::WriteAllBytes((Join-Path $sfDir "f$i.dat"), $fbuf)
               }
-              $fs.Flush($true)
-            } finally { $fs.Dispose() }
-            $sw.Stop()
-            $iops = [math]::Round($OPS/$sw.Elapsed.TotalSeconds,0)
-          } catch {
-            Write-Host "PERF-ERROR seq/rand: $_"
-          } finally {
-            Remove-Item $bin -Force -ErrorAction SilentlyContinue
+              $sw.Stop()
+              $r.create = [math]::Round($Files/$sw.Elapsed.TotalSeconds,0)
+              # -- 4. tar extract: composite read+write, real tooling --
+              if (Get-Command tar -ErrorAction SilentlyContinue) {
+                $tarFile = Join-Path $dir 'sf.tar'
+                $outDir  = Join-Path $dir 'sfx'
+                New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+                & tar -cf $tarFile -C $sfDir . 2>$null
+                if (Test-Path $tarFile) {
+                  $tarBytes = (Get-Item $tarFile).Length
+                  $sw = [Diagnostics.Stopwatch]::StartNew()
+                  & tar -xf $tarFile -C $outDir 2>$null
+                  $sw.Stop()
+                  $r.tar = [math]::Round(($tarBytes/1000000)/$sw.Elapsed.TotalSeconds,1)
+                }
+                Remove-Item $tarFile -Force -ErrorAction SilentlyContinue
+                Remove-Item $outDir -Recurse -Force -ErrorAction SilentlyContinue
+              }
+              # -- 5. delete rate: the runner's cleanup path --
+              $sw = [Diagnostics.Stopwatch]::StartNew()
+              Remove-Item $sfDir -Recurse -Force -ErrorAction SilentlyContinue
+              $sw.Stop()
+              $r.delete = [math]::Round($Files/$sw.Elapsed.TotalSeconds,0)
+            } catch {
+              Write-Host "PERF-ERROR root=$Root : $_"
+            } finally {
+              Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            return $r
           }
-          # ---- 3. many small files: the shape CI actually generates ----
-          # git checkout, npm/nuget restore and actions/cache all create tens of
-          # thousands of small files. This is NTFS metadata + journal bound, not
-          # bandwidth bound, and it is where a regression would actually bite.
-          $sfDir = Join-Path $ws 'smallfiles'
-          $FILES = 6000
-          try {
-            New-Item -ItemType Directory -Path $sfDir -Force | Out-Null
-            $fbuf = [byte[]]::new(16384)
-            [Random]::new(3).NextBytes($fbuf)
-            $sw = [Diagnostics.Stopwatch]::StartNew()
-            for ($i=0; $i -lt $FILES; $i++) {
-              [IO.File]::WriteAllBytes((Join-Path $sfDir "f$i.dat"), $fbuf)
+          # ---- primary: the workspace volume ----
+          # Params held identical to run 34433333661 so results stay comparable.
+          $p = Invoke-VolumeBench -Root $ws -SeqMiB 3072 -RandOps 5000 -Files 6000
+          $seqPct='n/a'; $verdict='n/a'
+          if ($capBps -gt 0 -and $p.seq -ne 'n/a') {
+            $seqPct = [math]::Round(100*($p.seq*1000000)/$capBps,0)
+            $verdict = if ($seqPct -gt 105) { 'host-cached' }
+                       elseif ($seqPct -ge 85) { 'at cap' }
+                       else { 'below cap' }
+          }
+          # ---- secondary: C:, only when the workspace is not already there ----
+          # This is the control that separates "ephemeral" from "system volume".
+          # Files count MUST match the primary for the comparison to hold.
+          $secVol='n/a'; $s=[ordered]@{ seq='n/a'; iops='n/a'; create='n/a'; delete='n/a'; tar='n/a' }
+          if ($wsDrive -ne 'C') {
+            $secRoot = $null
+            foreach ($cand in @('C:\', (Join-Path $env:LOCALAPPDATA 'Temp'))) {
+              try {
+                $t = Join-Path $cand ('wr-' + [guid]::NewGuid().ToString('N').Substring(0,6))
+                New-Item -ItemType Directory -Path $t -Force -ErrorAction Stop | Out-Null
+                Remove-Item $t -Force -ErrorAction SilentlyContinue
+                $secRoot = $cand; break
+              } catch { }
             }
-            $sw.Stop()
-            $createRate = [math]::Round($FILES/$sw.Elapsed.TotalSeconds,0)
-            # ---- 4. tar extract: composite read+write, real tooling ----
-            if (Get-Command tar -ErrorAction SilentlyContinue) {
-              $tarFile = Join-Path $ws 'sf.tar'
-              $outDir  = Join-Path $ws 'sfx'
-              New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-              & tar -cf $tarFile -C $sfDir . 2>$null
-              if (Test-Path $tarFile) {
-                $tarBytes = (Get-Item $tarFile).Length
-                $sw = [Diagnostics.Stopwatch]::StartNew()
-                & tar -xf $tarFile -C $outDir 2>$null
-                $sw.Stop()
-                $tarMBps = [math]::Round(($tarBytes/1000000)/$sw.Elapsed.TotalSeconds,1)
-              }
-              Remove-Item $tarFile -Force -ErrorAction SilentlyContinue
-              Remove-Item $outDir -Recurse -Force -ErrorAction SilentlyContinue
+            if ($secRoot) {
+              $secVol = 'C'
+              $s = Invoke-VolumeBench -Root $secRoot -SeqMiB 1024 -RandOps 2000 -Files 6000
+            } else {
+              Write-Host "SECONDARY skipped: no writable location on C:"
             }
-            # ---- 5. delete rate: the runner's cleanup path ----
-            $sw = [Diagnostics.Stopwatch]::StartNew()
-            Remove-Item $sfDir -Recurse -Force -ErrorAction SilentlyContinue
-            $sw.Stop()
-            $deleteRate = [math]::Round($FILES/$sw.Elapsed.TotalSeconds,0)
-          } catch {
-            Write-Host "PERF-ERROR smallfiles: $_"
-            Remove-Item $sfDir -Recurse -Force -ErrorAction SilentlyContinue
+          } else {
+            Write-Host "SECONDARY skipped: workspace is already on C:"
           }
           $capMBps = if ($capBps -gt 0) { [math]::Round($capBps/1000000,0) } else { 'unknown' }
           # ---- each job writes COMPLETE tables (header + one row) ----
           $summary = @(
             "#### ${{ matrix.n }}: $stamp / $sku / $mode"
             ""
-            "| stamp | sku | mode | ws vol | ws size | ws free | D: size | C: free |"
-            "|---|---|---|---|---|---|---|---|"
-            "| $stamp | $sku | **$mode** | $($wsDrive): | $wsSize | **$wsFree** | $dSize | $cFree |"
+            "| stamp | sku | mode | ws vol | ws size | ws free | ws used% | D: size | C: free | C: used% |"
+            "|---|---|---|---|---|---|---|---|---|---|"
+            "| $stamp | $sku | **$mode** | $($wsDrive): | $wsSize | **$wsFree** | $wsUsedPct% | $dSize | $cFree | $cUsedPct% |"
             ""
-            "| seq write MB/s | cap MB/s | % of cap | verdict | rand4k IOPS (QD1) | files/s create | files/s delete | tar extract MB/s |"
+            "**Primary volume $($wsDrive): (workspace)** - cluster $wsCluster B, MFT $wsMft MB"
+            ""
+            "| seq write MB/s | cap MB/s | % of cap | verdict | rand4k IOPS | create files/s | delete files/s | tar MB/s |"
             "|---|---|---|---|---|---|---|---|"
-            "| $seqMBps | $capMBps | $seqPct | $verdict | $iops | $createRate | $deleteRate | $tarMBps |"
+            "| $($p.seq) | $capMBps | $seqPct | $verdict | $($p.iops) | $($p.create) | $($p.delete) | $($p.tar) |"
+            ""
+            "**Secondary volume $secVol : (control)** - cluster $cCluster B, MFT $cMft MB"
+            ""
+            "| seq write MB/s | rand4k IOPS | create files/s | delete files/s | tar MB/s |"
+            "|---|---|---|---|---|"
+            "| $($s.seq) | $($s.iops) | $($s.create) | $($s.delete) | $($s.tar) |"
           ) -join "`n"
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           # single greppable line, no ANSI
           Write-Host ("PROBE stamp=$stamp sku=$sku mode=$mode d_drive=$dPresent ws_vol=$wsDrive " +
-            "ws_size_gb=$wsSize ws_free_gb=$wsFree d_size_gb=$dSize d_free_gb=$dFree c_free_gb=$cFree " +
-            "seq_mbps=$seqMBps cap_mbps=$capMBps pct_of_cap=$seqPct verdict=$verdict " +
-            "rand4k_iops=$iops create_fps=$createRate delete_fps=$deleteRate tar_mbps=$tarMBps " +
+            "ws_size_gb=$wsSize ws_free_gb=$wsFree ws_used_pct=$wsUsedPct d_size_gb=$dSize d_free_gb=$dFree " +
+            "c_free_gb=$cFree c_used_pct=$cUsedPct ws_cluster=$wsCluster ws_mft_mb=$wsMft " +
+            "c_cluster=$cCluster c_mft_mb=$cMft " +
+            "seq_mbps=$($p.seq) cap_mbps=$capMBps pct_of_cap=$seqPct verdict=$verdict " +
+            "rand4k_iops=$($p.iops) create_fps=$($p.create) delete_fps=$($p.delete) tar_mbps=$($p.tar) " +
+            "sec_vol=$secVol sec_seq_mbps=$($s.seq) sec_iops=$($s.iops) sec_create_fps=$($s.create) " +
+            "sec_delete_fps=$($s.delete) sec_tar_mbps=$($s.tar) " +
             "rtp=$rtp ws_excluded=$wsExcluded sub=$sub rg=$rg")
