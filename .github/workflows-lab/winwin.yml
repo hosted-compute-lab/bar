@@ -3,45 +3,50 @@
 # Question: does the D: drive survive an ephemeral OS disk, and how much scratch
 # space does the runner lose?
 #
-# DESIGN -- SPLIT-STAMP A/B
-#   lab is split across lab-eus-01 and lab-iad-01, which can be configured
-#   independently. Configure ONE stamp ephemeral and the other managed, leave the
-#   label identical, and let normal routing decide which stamp picks up each job.
+# READ RESULTS FROM THE RUN SUMMARY PAGE, NOT THE LOGS.
+#   Each job appends a row to $GITHUB_STEP_SUMMARY, so the Actions run summary
+#   renders a readable table. The raw logs are noisy because PowerShell echoes
+#   every line of a multi-line `run:` block with ANSI colour codes, which is what
+#   made the earlier runs hard to read in the UI.
 #
-#   You do NOT need to correlate workerId against service logs. Each job
-#   self-identifies from IMDS: RP stamps hosted_compute.* tags at VM create time,
-#   and hosted_compute.base_ro_url embeds the stamp name. The job prints
-#   `RESULT stamp=...` alongside its disk findings, so results bucket themselves.
+# SETUP
+#   Configure ONE lab stamp ephemeral (RP deployed + EnableForceEphemeralWindows
+#   enabled) and leave the other managed. Keep the label identical so both arms
+#   draw from the same job stream and the same pool warmth.
 #
-#   Because assignment is luck-of-the-draw, run the matrix repeatedly until both
-#   stamps have enough samples. Every line worth collecting is prefixed RESULT,
-#   so `gh run view --log | grep RESULT` gives a parseable dataset.
+#   Each job self-identifies from IMDS: RP stamps hosted_compute.* tags at VM
+#   create and hosted_compute.base_ro_url embeds the stamp name, so no log
+#   correlation is needed.
 #
-# Runs entirely in-guest; needs no Azure permissions. (`az vm run-command` is not
-# usable -- Microsoft.Compute/virtualMachines/runCommand/action is not granted.)
+#   Use a PUBLIC repo. Public routes to the `-small` config (D4 SKUs, which the
+#   flag can act on); private routes to `-default` (D2, never eligible).
+#
+# CONVERGENCE
+#   The override is applied when an allocation record is created, and those
+#   records outlive individual VMs. Expect a mix of managed and ephemeral for a
+#   while after enabling the flag, converging as records turn over. Re-run until
+#   there are enough ephemeral samples on the enabled stamp.
 #
 # WHAT TO COMPARE, bucketed by stamp:
-#   d_drive_present   true on managed, expected false on ephemeral+ResourceDisk.
-#                     The open question is NvmeDisk placement (v6/v7 SKUs) --
-#                     if D: survives there, v6/v7 migrates with no workdir change.
-#   workspace_volume  does GITHUB_WORKSPACE move from D: to C:?
-#   total_free_gb     THE number. A large drop is the regression that likely
-#                     drove the original customer complaints.
-#   throughput_mbps   sanity check only, not a benchmark.
+#   d_drive     Expected False on ephemeral + ResourceDisk (D4ads_v5/D4ds_v5),
+#               where the 150 GB OS disk consumes the entire 150 GB local disk.
+#               OPEN QUESTION: on NvmeDisk SKUs (D4*_v6/v7, 220 GB local) a
+#               150 GB OS disk leaves ~70 GB. If D: survives there, v6/v7 could
+#               migrate with no working-directory change at all.
+#   ws_free     THE number. Managed baseline is 147 GB free on D4ads_v5 and
+#               220 GB on v6/v7. If ephemeral falls back to C:\a expect roughly
+#               32 GB, since the Windows image occupies ~117 GB of the 149 GB C:
+#               volume. For reference, D2 users already run with 73 GB today.
 name: ephemeral-disk-probe
 on:
   workflow_dispatch:
     inputs:
       label:
-        description: 'runs-on label (identical for both stamps)'
+        description: 'runs-on label (identical for both stamps; use a public repo)'
         required: true
-        default: 'windows-2025'
-      samples:
-        description: 'Parallel jobs per run (raises odds of hitting both stamps)'
-        required: false
-        default: '6'
+        default: 'windows-latest'
 jobs:
-  spread:
+  probe:
     strategy:
       fail-fast: false
       matrix:
@@ -49,63 +54,58 @@ jobs:
     name: probe-${{ matrix.n }}
     runs-on: ${{ inputs.label }}
     steps:
-      - name: Identify and probe
+      - name: Probe disk layout
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
-          # ---- SELF-IDENTIFY VIA IMDS -------------------------------------
-          # RP stamps hosted_compute.* tags at VM create. base_ro_url contains
-          # the stamp (lab-iad-01 / lab-eus-01), quota_id gives the RFG. This
-          # removes any need to correlate workerId against service logs.
-          $stamp='unknown'; $quota='unknown'; $sku='unknown'; $rg='unknown'; $sub='unknown'
+          # ---- self-identify via IMDS ----
+          $stamp='unknown'; $sku='unknown'
           try {
             $imds = Invoke-RestMethod -Headers @{Metadata='true'} -TimeoutSec 10 `
               -Uri 'http://169.254.169.254/metadata/instance?api-version=2021-02-01'
             $sku = $imds.compute.vmSize
-            $rg  = $imds.compute.resourceGroupName
-            $sub = $imds.compute.subscriptionId
             foreach ($t in $imds.compute.tagsList) {
-              if ($t.name -eq 'hosted_compute.quota_id') { $quota = $t.value }
-              if ($t.name -eq 'hosted_compute.base_ro_url') {
-                if ($t.value -match 'request-orchestrator-([a-z0-9-]+)\.') { $stamp = $Matches[1] }
-              }
+              if ($t.name -eq 'hosted_compute.base_ro_url' -and
+                  $t.value -match 'request-orchestrator-([a-z0-9-]+)\.') { $stamp = $Matches[1] }
             }
           } catch { Write-Host "IMDS unavailable: $_" }
-          Write-Host ("RESULT stamp={0} quota={1} sku={2} sub={3}" -f $stamp,$quota,$sku,$sub)
-          Write-Host ("RESULT resource_group={0} runner={1}" -f $rg,$env:RUNNER_NAME)
-          # ---- DISK LAYOUT -------------------------------------------------
-          Write-Host "=== VOLUMES ==="
-          Get-Volume | Where-Object { $_.DriveLetter } |
-            Select-Object DriveLetter, FileSystemLabel, FileSystem,
-              @{n='SizeGB'; e={[math]::Round($_.Size/1GB,1)}},
-              @{n='FreeGB'; e={[math]::Round($_.SizeRemaining/1GB,1)}} |
-            Format-Table -AutoSize
-          Write-Host "=== PHYSICAL DISKS ==="
-          Get-Disk | Select-Object Number, FriendlyName,
-            @{n='SizeGB'; e={[math]::Round($_.Size/1GB,1)}}, PartitionStyle |
-            Format-Table -AutoSize
-          # D: presence is itself the arm indicator: with an ephemeral OS disk on
-          # ResourceDisk placement the temp disk is consumed and D: disappears.
+          # ---- disk layout ----
           $dPresent = Test-Path 'D:\'
-          Write-Host ("RESULT d_drive_present={0}" -f $dPresent)
-          $d = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name
-          $v = Get-Volume -DriveLetter $d
-          Write-Host ("RESULT workspace_volume={0} size_gb={1} free_gb={2}" -f `
-            $d, [math]::Round($v.Size/1GB,1), [math]::Round($v.SizeRemaining/1GB,1))
-          # Total scratch across all fixed volumes -- the customer-visible number.
-          $tot = (Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Fixed' } |
-                  Measure-Object -Property SizeRemaining -Sum).Sum
-          Write-Host ("RESULT total_free_gb={0}" -f [math]::Round($tot/1GB,1))
-          Write-Host ("RESULT github_workspace={0}" -f $env:GITHUB_WORKSPACE)
-      - name: Write throughput
-        shell: pwsh
-        run: |
+          $wsDrive  = (Get-Item $env:GITHUB_WORKSPACE).PSDrive.Name
+          $wsVol    = Get-Volume -DriveLetter $wsDrive
+          $wsSize   = [math]::Round($wsVol.Size/1GB,1)
+          $wsFree   = [math]::Round($wsVol.SizeRemaining/1GB,1)
+          $cVol  = Get-Volume -DriveLetter C
+          $cSize = [math]::Round($cVol.Size/1GB,1)
+          $cFree = [math]::Round($cVol.SizeRemaining/1GB,1)
+          $dSize = 'n/a'; $dFree = 'n/a'
+          if ($dPresent) {
+            $dVol  = Get-Volume -DriveLetter D
+            $dSize = [math]::Round($dVol.Size/1GB,1)
+            $dFree = [math]::Round($dVol.SizeRemaining/1GB,1)
+          }
+          # ---- 2 GB sequential write, sanity check only ----
           $f = Join-Path $env:GITHUB_WORKSPACE 'probe.bin'
           $buf = New-Object byte[] (64MB); (New-Object Random).NextBytes($buf)
           $sw = [Diagnostics.Stopwatch]::StartNew()
           $fs = [IO.File]::OpenWrite($f)
-          try { 1..32 | ForEach-Object { $fs.Write($buf, 0, $buf.Length) } } finally { $fs.Close() }
+          try { 1..32 | ForEach-Object { $fs.Write($buf,0,$buf.Length) } } finally { $fs.Close() }
           $sw.Stop(); Remove-Item $f -Force
-          Write-Host ("RESULT write_2gb_seconds={0} throughput_mbps={1}" -f `
-            [math]::Round($sw.Elapsed.TotalSeconds,2),
-            [math]::Round(2048/$sw.Elapsed.TotalSeconds,1))
+          $mbps = [math]::Round(2048/$sw.Elapsed.TotalSeconds,1)
+          $mode = if ($dPresent) { 'managed' } else { 'EPHEMERAL' }
+          # ---- render a row into the run summary ----
+          "| $stamp | $sku | $mode | $dPresent | $($wsDrive): | $wsFree | $dSize | $dFree | $cFree | $mbps |" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          # plain greppable line for `gh run view --log | grep PROBE`
+          Write-Host "PROBE stamp=$stamp sku=$sku mode=$mode d_drive=$dPresent ws_vol=$wsDrive ws_size_gb=$wsSize ws_free_gb=$wsFree d_size_gb=$dSize d_free_gb=$dFree c_size_gb=$cSize c_free_gb=$cFree mbps=$mbps"
+  header:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Table header
+        run: |
+          {
+            echo "### Phase 1 disk probe"
+            echo ""
+            echo "| stamp | sku | mode | D: | ws vol | ws free GB | D: size | D: free | C: free | MB/s |"
+            echo "|---|---|---|---|---|---|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
