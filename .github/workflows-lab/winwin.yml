@@ -36,18 +36,30 @@ jobs:
         run: |
           $ErrorActionPreference = 'Continue'
           # ---- self-identify via IMDS ----
-          $stamp='unknown'; $sku='unknown'; $rg='unknown'
+          $stamp='unknown'; $sku='unknown'; $rg='unknown'; $sub='unknown'
           try {
             $imds = Invoke-RestMethod -Headers @{Metadata='true'} -TimeoutSec 10 `
               -Uri 'http://169.254.169.254/metadata/instance?api-version=2021-02-01'
             $sku = $imds.compute.vmSize
             $rg  = $imds.compute.resourceGroupName
+            $sub = $imds.compute.subscriptionId
             foreach ($t in $imds.compute.tagsList) {
               if ($t.name -eq 'hosted_compute.base_ro_url' -and
                   $t.value -match 'request-orchestrator-([a-z0-9-]+)\.') { $stamp = $Matches[1] }
             }
-            # Fall back to the resource group, which embeds the subscription.
-            if ($stamp -eq 'unknown' -and $rg -match '^azure-([a-z0-9]+)-') { $stamp = "rg:$($Matches[1])" }
+            # Not every VM carries the base_ro_url tag (older pool members predate
+            # it), so fall back to the subscription, which maps 1:1 to a stamp.
+            #   9dd9d246 = Lab 003 -> lab-eus-01
+            #   c3b56e7d = Lab 001 -> lab-iad-01
+            #   bdc79a4f = Lab 002 -> lab-iad-01
+            if ($stamp -eq 'unknown') {
+              switch -Wildcard ($sub) {
+                '9dd9d246*' { $stamp = 'lab-eus-01(sub)' }
+                'c3b56e7d*' { $stamp = 'lab-iad-01(sub)' }
+                'bdc79a4f*' { $stamp = 'lab-iad-01(sub)' }
+                default     { $stamp = "sub:$($sub.Substring(0,8))" }
+              }
+            }
           } catch { Write-Host "IMDS unavailable: $_" }
           # ---- disk layout ----
           $dPresent = Test-Path 'D:\'
@@ -66,6 +78,24 @@ jobs:
           # OS disk mode. An ephemeral OS disk consumes the SKU's local disk, so
           # on ResourceDisk SKUs D: disappears entirely.
           $mode = if ($dPresent) { 'managed' } else { '**EPHEMERAL**' }
+          # ---- raw device + partition inventory -------------------------------
+          # Two questions this answers:
+          #  1. On ephemeral v6/v7 (220 GB NVMe vs a 150 GB OS disk) is the ~70 GB
+          #     remainder visible as an unallocated device? If so, the existing
+          #     formatRawDiskIfExists path could format it and restore D:.
+          #  2. Is the C: partition smaller than disk 0? If so, raising
+          #     DiskSizeOverrideGB only helps if the partition is also extended.
+          Write-Host "=== DISKS ==="
+          foreach ($dk in (Get-Disk | Sort-Object Number)) {
+            $alloc = [math]::Round($dk.AllocatedSize/1GB,1)
+            $tot   = [math]::Round($dk.Size/1GB,1)
+            Write-Host ("DISK num={0} size_gb={1} allocated_gb={2} unalloc_gb={3} bus={4} model='{5}' partstyle={6}" -f `
+              $dk.Number, $tot, $alloc, [math]::Round(($dk.Size-$dk.AllocatedSize)/1GB,1), $dk.BusType, $dk.FriendlyName, $dk.PartitionStyle)
+          }
+          foreach ($pt in (Get-Partition | Sort-Object DiskNumber, PartitionNumber)) {
+            Write-Host ("PART disk={0} part={1} letter={2} size_gb={3} type={4}" -f `
+              $pt.DiskNumber, $pt.PartitionNumber, $pt.DriveLetter, [math]::Round($pt.Size/1GB,1), $pt.Type)
+          }
           # ---- 2 GB sequential write, sanity check only ----
           $f = Join-Path $env:GITHUB_WORKSPACE 'probe.bin'
           $buf = New-Object byte[] (64MB); (New-Object Random).NextBytes($buf)
@@ -84,4 +114,4 @@ jobs:
           ) -join "`n"
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           # single greppable line, no ANSI
-          Write-Host "PROBE stamp=$stamp sku=$sku mode=$($mode -replace '\*','') d_drive=$dPresent ws_vol=$wsDrive ws_size_gb=$wsSize ws_free_gb=$wsFree d_size_gb=$dSize d_free_gb=$dFree c_free_gb=$cFree mbps=$mbps rg=$rg"
+          Write-Host "PROBE stamp=$stamp sku=$sku mode=$($mode -replace '\*','') d_drive=$dPresent ws_vol=$wsDrive ws_size_gb=$wsSize ws_free_gb=$wsFree d_size_gb=$dSize d_free_gb=$dFree c_free_gb=$cFree mbps=$mbps sub=$sub rg=$rg"
