@@ -73,13 +73,30 @@
 #   label identical so both arms share the job stream and pool warmth. Both
 #   stamps converting to ephemeral destroys the control arm.
 #
+# DO NOT INFER THE DISK MODE FROM D: PRESENCE
+#   Earlier revisions set mode = (Test-Path 'D:\') ? managed : EPHEMERAL. That
+#   was valid until RP started backing D: with a VHDX on forced-ephemeral
+#   v6/v7 VMs, at which point every one of those VMs started reporting as
+#   "managed" -- making it look like v6 ephemeral samples never occurred when
+#   in fact they were being collected and mislabelled the whole time.
+#
+#   Mode now comes from IMDS compute.storageProfile.osDisk.diffDiskSettings
+#   (option = "Local" means ephemeral), with the old inference kept only as a
+#   fallback when IMDS is unreachable. The two are compared on every run and
+#   any disagreement is printed. d_kind separately reports whether D: is a real
+#   device ('physical'), a VHDX file on C: ('vhdx'), or absent ('none').
+#
 # READING RESULTS
 #     gh run view <id> --repo <owner>/<repo> --log | grep -o 'PROBE .*'
 #   Always group by EXACT sku, never by "v6/v7" -- v6 caps at 180 MB/s and v7 at
 #   280 MB/s, so pooling them injects a 1.56x spread before any real variance.
 #   create_fps is the noisiest metric (CV 41% ephemeral / 6% managed); prefer
 #   delete_fps and tar_mbps for conclusions.
+#   Group by (sku, mode, d_kind): a v6 ephemeral with a VHDX D: and a v6
+#   managed with a real D: are different arms that both have a D: drive.
+
 name: ephemeral-disk-probe
+
 on:
   workflow_dispatch:
     inputs:
@@ -87,6 +104,7 @@ on:
         description: 'runs-on label (use a public repo so this resolves to D4)'
         required: true
         default: 'windows-latest'
+
 jobs:
   probe:
     strategy:
@@ -102,14 +120,27 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
+
           # ---- self-identify via IMDS ----
-          $stamp='unknown'; $sku='unknown'; $rg='unknown'; $sub='unknown'
+          $stamp='unknown'; $sku='unknown'; $rg='unknown'; $sub='unknown'; $osDiskEphemeral='unknown'
           try {
             $imds = Invoke-RestMethod -Headers @{Metadata='true'} -TimeoutSec 10 `
               -Uri 'http://169.254.169.254/metadata/instance?api-version=2021-02-01'
             $sku = $imds.compute.vmSize
             $rg  = $imds.compute.resourceGroupName
             $sub = $imds.compute.subscriptionId
+
+            # Authoritative ephemeral detection. An ephemeral OS disk carries
+            # diffDiskSettings.option = "Local"; a managed one has no
+            # diffDiskSettings at all. This is the ONLY trustworthy signal now
+            # that ephemeral VMs can also present a D: drive (see below).
+            $dds = $imds.compute.storageProfile.osDisk.diffDiskSettings
+            if ($null -ne $dds) {
+              $osDiskEphemeral = ($dds.option -eq 'Local')
+            } elseif ($null -ne $imds.compute.storageProfile.osDisk) {
+              $osDiskEphemeral = $false
+            }
+
             foreach ($t in $imds.compute.tagsList) {
               if ($t.name -eq 'hosted_compute.base_ro_url' -and
                   $t.value -match 'request-orchestrator-([a-z0-9-]+)\.') { $stamp = $Matches[1] }
@@ -125,6 +156,7 @@ jobs:
               }
             }
           } catch { Write-Host "IMDS unavailable: $_" }
+
           # ---- disk layout ----
           $dPresent = Test-Path 'D:\'
           $ws       = $env:GITHUB_WORKSPACE
@@ -133,16 +165,65 @@ jobs:
           $wsFree   = [math]::Round($wsVol.SizeRemaining/1GB,1)
           $wsSize   = [math]::Round($wsVol.Size/1GB,1)
           $wsUsedPct = if ($wsVol.Size) { [math]::Round(100*(1-$wsVol.SizeRemaining/$wsVol.Size),0) } else { 0 }
+
           $cVol  = Get-Volume -DriveLetter C
           $cFree = [math]::Round($cVol.SizeRemaining/1GB,1)
           $cUsedPct = if ($cVol.Size) { [math]::Round(100*(1-$cVol.SizeRemaining/$cVol.Size),0) } else { 0 }
+
           $dSize='n/a'; $dFree='n/a'
           if ($dPresent) {
             $dVol  = Get-Volume -DriveLetter D
             $dSize = [math]::Round($dVol.Size/1GB,1)
             $dFree = [math]::Round($dVol.SizeRemaining/1GB,1)
           }
-          $mode = if ($dPresent) { 'managed' } else { 'EPHEMERAL' }
+
+          # ---- what KIND of D: is this? ----
+          # RP can now back D: with a VHDX file stored on C: when an allocation
+          # is forced onto an ephemeral OS disk, so "D: exists" no longer means
+          # "managed OS disk".
+          #
+          # BusType is the ONLY reliable discriminator. FriendlyName is
+          # 'Msft Virtual Disk' for BOTH a mounted VHDX and an ordinary Azure
+          # managed disk -- matching on the name misclassifies every managed
+          # v5 temp disk as a VHDX. Observed values:
+          #   File Backed Virtual  -> VHDX mounted from a file on C:
+          #   SAS                  -> Azure managed disk (OS or temp)
+          #   NVMe                 -> local NVMe (ephemeral OS disk or temp disk)
+          $dKind = 'none'
+          if ($dPresent) {
+            $dKind = 'physical'
+            try {
+              $dDisk = Get-Partition -DriveLetter D -ErrorAction Stop | Get-Disk -ErrorAction Stop
+              if ($dDisk.BusType -eq 'File Backed Virtual') { $dKind = 'vhdx' }
+              Write-Host ("DDRIVE kind={0} bus={1} model='{2}' size_gb={3}" -f `
+                $dKind, $dDisk.BusType, $dDisk.FriendlyName, [math]::Round($dDisk.Size/1GB,1))
+            } catch {
+              $dKind = 'unknown'
+              Write-Host "DDRIVE kind=unknown (could not map D: to a disk): $_"
+            }
+          }
+
+          # OS disk mode. Prefer the IMDS answer; it is the only signal that
+          # cannot be confused by a VHDX-backed D:. Fall back to inferring from
+          # the D: drive only when IMDS is unavailable, and treat a VHDX D: as
+          # ephemeral because only a forced-ephemeral allocation creates one.
+          if ($osDiskEphemeral -is [bool]) {
+            $mode = if ($osDiskEphemeral) { 'EPHEMERAL' } else { 'managed' }
+            $modeSrc = 'imds'
+          } else {
+            $mode = if ($dKind -eq 'none' -or $dKind -eq 'vhdx') { 'EPHEMERAL' } else { 'managed' }
+            $modeSrc = 'inferred'
+          }
+
+          # Flag any disagreement between the two signals rather than silently
+          # trusting one. Before the VHDX change these always agreed, and the
+          # old probe hardcoded the inference -- which is why forced-ephemeral
+          # v6/v7 VMs were being reported as "managed" once they gained a D:.
+          $naiveMode = if ($dPresent) { 'managed' } else { 'EPHEMERAL' }
+          if ($naiveMode -ne $mode) {
+            Write-Host "NOTE: naive D:-presence check would have said '$naiveMode' but this VM is '$mode' (d_kind=$dKind)"
+          }
+
           # ---- raw device + partition inventory ----
           Write-Host "=== DISKS ==="
           foreach ($dk in (Get-Disk | Sort-Object Number)) {
@@ -154,6 +235,7 @@ jobs:
             Write-Host ("PART disk={0} part={1} letter={2} size_gb={3} type={4}" -f `
               $pt.DiskNumber, $pt.PartitionNumber, $pt.DriveLetter, [math]::Round($pt.Size/1GB,1), $pt.Type)
           }
+
           # ---- NTFS geometry ----
           # Cluster size is the leading alternative explanation for the
           # small-file gap: Azure temp disks are commonly formatted with 64 KB
@@ -192,6 +274,7 @@ jobs:
           $wsMft     = if ($geo.ContainsKey($wsDrive)) { $geo[$wsDrive].mftMB }   else { '?' }
           $cCluster  = if ($geo.ContainsKey('C'))      { $geo['C'].cluster }      else { '?' }
           $cMft      = if ($geo.ContainsKey('C'))      { $geo['C'].mftMB }        else { '?' }
+
           # ---- antivirus exclusion coverage ----
           # Moving the workspace from D:\a to C:\a changes the path, and if the
           # image carries a Defender exclusion for the old path the new one may
@@ -207,6 +290,7 @@ jobs:
             $rtp = (Get-MpComputerStatus -ErrorAction Stop).RealTimeProtectionEnabled
           } catch { Write-Host "Defender state unavailable: $_" }
           Write-Host "DEFENDER rtp_enabled=$rtp ws_excluded=$wsExcluded exclusions='$exclList'"
+
           # ---- platform write caps, from az vm list-skus (bytes/sec) ----
           # v5  = CombinedTempDiskAndCachedWriteBytesPerSecond (temp disk path)
           # v6+ = NvmeMaxWriteBytesPerSecond (local NVMe path)
@@ -222,16 +306,19 @@ jobs:
             'Standard_D4ds_v7'  = 280000000
           }
           $capBps = if ($caps.ContainsKey($sku)) { $caps[$sku] } else { 0 }
+
           # ================= perf harness =================
           # All throughput in decimal MB/s (10^6 bytes) to match Azure's units.
           function Invoke-VolumeBench {
             param([string]$Root, [int]$SeqMiB, [int]$RandOps, [int]$Files)
+
             $r = [ordered]@{ seq='n/a'; iops='n/a'; create='n/a'; delete='n/a'; tar='n/a' }
             $dir = Join-Path $Root ('bench-' + [guid]::NewGuid().ToString('N').Substring(0,8))
             $bin = Join-Path $dir 'probe.bin'
             $sfDir = Join-Path $dir 'smallfiles'
             try {
               New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
+
               # -- 1. sequential write, WriteThrough --
               $BLOCK = 8MB
               $buf = [byte[]]::new($BLOCK)
@@ -247,6 +334,7 @@ jobs:
               $sw.Stop()
               $bytes = [long]$SeqMiB * 1MB
               $r.seq = [math]::Round(($bytes/1000000)/$sw.Elapsed.TotalSeconds,1)
+
               # -- 2. random 4 KiB write IOPS, QD1, WriteThrough --
               # Latency-bound by design: QD1 will not reach NvmeMaxWriteIops
               # (30,000). Fair A/B between arms, not a cap test.
@@ -267,6 +355,7 @@ jobs:
               $sw.Stop()
               $r.iops = [math]::Round($RandOps/$sw.Elapsed.TotalSeconds,0)
               Remove-Item $bin -Force -ErrorAction SilentlyContinue
+
               # -- 3. many small files: the shape CI actually generates --
               # git checkout, npm/nuget restore and actions/cache all create
               # tens of thousands of small files. NTFS metadata + journal bound,
@@ -280,6 +369,7 @@ jobs:
               }
               $sw.Stop()
               $r.create = [math]::Round($Files/$sw.Elapsed.TotalSeconds,0)
+
               # -- 4. tar extract: composite read+write, real tooling --
               if (Get-Command tar -ErrorAction SilentlyContinue) {
                 $tarFile = Join-Path $dir 'sf.tar'
@@ -296,6 +386,7 @@ jobs:
                 Remove-Item $tarFile -Force -ErrorAction SilentlyContinue
                 Remove-Item $outDir -Recurse -Force -ErrorAction SilentlyContinue
               }
+
               # -- 5. delete rate: the runner's cleanup path --
               $sw = [Diagnostics.Stopwatch]::StartNew()
               Remove-Item $sfDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -308,9 +399,11 @@ jobs:
             }
             return $r
           }
+
           # ---- primary: the workspace volume ----
           # Params held identical to run 34433333661 so results stay comparable.
           $p = Invoke-VolumeBench -Root $ws -SeqMiB 3072 -RandOps 5000 -Files 6000
+
           $seqPct='n/a'; $verdict='n/a'
           if ($capBps -gt 0 -and $p.seq -ne 'n/a') {
             $seqPct = [math]::Round(100*($p.seq*1000000)/$capBps,0)
@@ -318,6 +411,7 @@ jobs:
                        elseif ($seqPct -ge 85) { 'at cap' }
                        else { 'below cap' }
           }
+
           # ---- secondary: C:, only when the workspace is not already there ----
           # This is the control that separates "ephemeral" from "system volume".
           # Files count MUST match the primary for the comparison to hold.
@@ -341,14 +435,16 @@ jobs:
           } else {
             Write-Host "SECONDARY skipped: workspace is already on C:"
           }
+
           $capMBps = if ($capBps -gt 0) { [math]::Round($capBps/1000000,0) } else { 'unknown' }
+
           # ---- each job writes COMPLETE tables (header + one row) ----
           $summary = @(
             "#### ${{ matrix.n }}: $stamp / $sku / $mode"
             ""
-            "| stamp | sku | mode | ws vol | ws size | ws free | ws used% | D: size | C: free | C: used% |"
-            "|---|---|---|---|---|---|---|---|---|---|"
-            "| $stamp | $sku | **$mode** | $($wsDrive): | $wsSize | **$wsFree** | $wsUsedPct% | $dSize | $cFree | $cUsedPct% |"
+            "| stamp | sku | mode | src | D: kind | ws vol | ws size | ws free | ws used% | D: size | C: free | C: used% |"
+            "|---|---|---|---|---|---|---|---|---|---|---|---|"
+            "| $stamp | $sku | **$mode** | $modeSrc | $dKind | $($wsDrive): | $wsSize | **$wsFree** | $wsUsedPct% | $dSize | $cFree | $cUsedPct% |"
             ""
             "**Primary volume $($wsDrive): (workspace)** - cluster $wsCluster B, MFT $wsMft MB"
             ""
@@ -363,8 +459,9 @@ jobs:
             "| $($s.seq) | $($s.iops) | $($s.create) | $($s.delete) | $($s.tar) |"
           ) -join "`n"
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
           # single greppable line, no ANSI
-          Write-Host ("PROBE stamp=$stamp sku=$sku mode=$mode d_drive=$dPresent ws_vol=$wsDrive " +
+          Write-Host ("PROBE stamp=$stamp sku=$sku mode=$mode mode_src=$modeSrc d_drive=$dPresent d_kind=$dKind ws_vol=$wsDrive " +
             "ws_size_gb=$wsSize ws_free_gb=$wsFree ws_used_pct=$wsUsedPct d_size_gb=$dSize d_free_gb=$dFree " +
             "c_free_gb=$cFree c_used_pct=$cUsedPct ws_cluster=$wsCluster ws_mft_mb=$wsMft " +
             "c_cluster=$cCluster c_mft_mb=$cMft " +
