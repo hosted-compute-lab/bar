@@ -101,3 +101,52 @@ jobs:
             fail "Workspace filesystem is below ${MIN_FILESYSTEM_GIB} GiB."
 
           printf '\nResult: PASS\n' | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Inspect first-boot disk expansion
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cloud-init --version
+          if cloud-init status --long; then
+            :
+          else
+            printf '::warning::cloud-init status exited %s\n' "$?"
+          fi
+
+          if sudo test -e /etc/growroot-disabled; then
+            echo "growroot-disabled marker EXISTS"
+          else
+            echo "No growroot-disabled marker"
+          fi
+
+          echo "=== Relevant image configuration ==="
+          sudo /usr/bin/python3 - <<'PY'
+          import pathlib
+          import yaml
+
+          paths = [pathlib.Path("/etc/cloud/cloud.cfg")]
+          paths += sorted(pathlib.Path("/etc/cloud/cloud.cfg.d").glob("*.cfg"))
+          keys = ("growpart", "resize_rootfs", "cloud_init_modules")
+          for path in paths:
+              config = yaml.safe_load(path.read_text()) or {}
+              selected = {key: config[key] for key in keys if key in config}
+              if selected:
+                  print(f"--- {path}")
+                  print(yaml.safe_dump(selected, sort_keys=False))
+          PY
+
+          echo "=== Early-boot COW/growth messages ==="
+          sudo journalctl -b -k --no-pager \
+            --grep='setup-dm-snapshot|growroot'
+
+          echo "=== Cloud-init resize messages ==="
+          sudo awk '
+            tolower($0) ~ /growpart|growroot|resizefs|resize2fs|mapped device|device_part_info/ {
+              print NR ":" $0
+              found = 1
+            }
+            END {
+              if (!found) print "No matching resize messages found"
+            }
+          ' /var/log/cloud-init.log
