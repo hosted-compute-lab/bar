@@ -136,10 +136,6 @@ jobs:
                   print(yaml.safe_dump(selected, sort_keys=False))
           PY
 
-          echo "=== Early-boot COW/growth messages ==="
-          sudo journalctl -b -k --no-pager \
-            --grep='setup-dm-snapshot|growroot'
-
           echo "=== Cloud-init resize messages ==="
           sudo awk '
             tolower($0) ~ /growpart|growroot|resizefs|resize2fs|mapped device|device_part_info/ {
@@ -150,3 +146,14 @@ jobs:
               if (!found) print "No matching resize messages found"
             }
           ' /var/log/cloud-init.log
+
+          echo "=== Early-boot COW/growth messages ==="
+          sudo journalctl -b -k --no-pager | awk '
+            tolower($0) ~ /setup-dm-snapshot|growroot/ {
+              print
+              found = 1
+            }
+            END {
+              if (!found) print "No matching early-boot messages found"
+            }
+          '
