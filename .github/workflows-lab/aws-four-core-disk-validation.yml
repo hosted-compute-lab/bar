@@ -1,0 +1,103 @@
+name: AWS four-core root disk validation
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04-aws
+    timeout-minutes: 5
+    env:
+      EXPECTED_EBS_GIB: "150"
+      MIN_FILESYSTEM_GIB: "140"
+    steps:
+      - name: Validate AWS placement and usable root disk capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          fail() {
+            printf '::error::%s\n' "$*" >&2
+            exit 1
+          }
+
+          gib() {
+            awk -v bytes="$1" 'BEGIN { printf "%.3f", bytes / 1073741824 }'
+          }
+
+          vendor="$(cat /sys/class/dmi/id/sys_vendor)"
+          cpus="$(nproc)"
+          root_source="$(findmnt --noheadings --output SOURCE /)"
+          root_device="$(readlink -f "$root_source")"
+
+          printf 'Cloud vendor: %s\nCPUs: %s\nRoot device: %s\n' \
+            "$vendor" "$cpus" "$root_device"
+          lsblk --bytes --output NAME,PATH,TYPE,SIZE,FSTYPE,MOUNTPOINTS,MODEL
+          df -h / "$GITHUB_WORKSPACE"
+
+          [[ "$vendor" == "Amazon EC2" ]] || fail "Expected AWS; cloud vendor is '$vendor'."
+          [[ "$cpus" == "4" ]] || fail "Expected 4 CPUs; found '$cpus'."
+
+          imds_token="$(curl --fail --silent --show-error --noproxy '*' \
+            --connect-timeout 2 --max-time 5 --request PUT \
+            --header 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+            http://169.254.169.254/latest/api/token)"
+
+          metadata() {
+            curl --fail --silent --show-error --noproxy '*' \
+              --connect-timeout 2 --max-time 5 \
+              --header "X-aws-ec2-metadata-token: $imds_token" \
+              "http://169.254.169.254/latest/meta-data/$1"
+          }
+
+          instance_id="$(metadata instance-id)"
+          instance_type="$(metadata instance-type)"
+          [[ -n "$instance_id" && -n "$instance_type" ]] || fail "AWS instance metadata is incomplete."
+          printf 'Instance ID: %s\nInstance type: %s\n' "$instance_id" "$instance_type"
+
+          devices="$(lsblk --json --bytes --nodeps --paths --output NAME,TYPE,SIZE,MODEL)"
+          ebs_disks="$(jq -ce '
+            [.blockdevices[] |
+              select(.type == "disk" and
+                ((.model // "" | gsub("^ +| +$"; "")) == "Amazon Elastic Block Store"))]
+          ' <<< "$devices")"
+          ebs_count="$(jq -r 'length' <<< "$ebs_disks")"
+          [[ "$ebs_count" == "1" ]] || fail "Expected one identifiable root EBS disk; found '$ebs_count'."
+
+          ebs_device="$(jq -er '.[0].name | select(type == "string" and startswith("/dev/"))' <<< "$ebs_disks")"
+          ebs_bytes="$(jq -er '.[0].size | select(type == "number" and . > 0)' <<< "$ebs_disks")"
+          ancestors="$(lsblk --inverse --paths --raw --noheadings --output NAME "$root_device")"
+          grep -Fxq -- "$ebs_device" <<< "$ancestors" ||
+            fail "The EBS disk '$ebs_device' is not an ancestor of the mounted root device."
+
+          root_bytes="$(df -B1 --output=size / | awk 'NR == 2 { print $1 }')"
+          workspace_bytes="$(df -B1 --output=size "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $1 }')"
+          [[ "$root_bytes" =~ ^[0-9]+$ && "$workspace_bytes" =~ ^[0-9]+$ ]] ||
+            fail "Could not read mounted root/workspace filesystem capacity."
+
+          expected_ebs_bytes=$((EXPECTED_EBS_GIB * 1024 * 1024 * 1024))
+          minimum_filesystem_bytes=$((MIN_FILESYSTEM_GIB * 1024 * 1024 * 1024))
+
+          {
+            printf '# AWS four-core root disk validation\n\n'
+            printf '| Measurement | Observed | Required |\n|---|---|---|\n'
+            printf '| Cloud | %s | Amazon EC2 |\n' "$vendor"
+            printf '| CPUs | %s | 4 |\n' "$cpus"
+            printf '| Instance | %s (%s) | AWS |\n' "$instance_id" "$instance_type"
+            printf '| Root device | %s | Backed by %s |\n' "$root_device" "$ebs_device"
+            printf '| EBS disk | %s GiB | %s GiB |\n' "$(gib "$ebs_bytes")" "$EXPECTED_EBS_GIB"
+            printf '| Mounted root filesystem | %s GiB | At least %s GiB |\n' "$(gib "$root_bytes")" "$MIN_FILESYSTEM_GIB"
+            printf '| Workspace filesystem | %s GiB | At least %s GiB |\n' "$(gib "$workspace_bytes")" "$MIN_FILESYSTEM_GIB"
+            printf '\nFilesystem thresholds allow overhead while rejecting the original 75 GiB layout.\n'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          [[ "$ebs_bytes" -eq "$expected_ebs_bytes" ]] ||
+            fail "Expected a ${EXPECTED_EBS_GIB} GiB EBS root disk; observed $(gib "$ebs_bytes") GiB."
+          [[ "$root_bytes" -ge "$minimum_filesystem_bytes" ]] ||
+            fail "Mounted root filesystem is below ${MIN_FILESYSTEM_GIB} GiB; the larger EBS disk is not fully usable."
+          [[ "$workspace_bytes" -ge "$minimum_filesystem_bytes" ]] ||
+            fail "Workspace filesystem is below ${MIN_FILESYSTEM_GIB} GiB."
+
+          printf '\nResult: PASS\n' | tee -a "$GITHUB_STEP_SUMMARY"
