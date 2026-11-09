@@ -7,7 +7,7 @@ permissions: {}
 
 jobs:
   validate:
-    runs-on: ubuntu-24.04-aws
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     env:
       EXPECTED_EBS_GIB: "150"
