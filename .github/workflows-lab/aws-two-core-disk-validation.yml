@@ -1,0 +1,307 @@
+name: AWS two-core root disk validation
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  validate:
+    runs-on: ubuntu-26.04-aws-2core
+    timeout-minutes: 5
+    env:
+      EXPECTED_EBS_GIB: "75"
+      MIN_FILESYSTEM_GIB: "70"
+      EXPECTED_AMIS: "ami-03bfd61cf945a6551"
+    steps:
+      - name: Validate AWS placement and usable root disk capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          fail() {
+            printf '::error::%s\n' "$*" >&2
+            exit 1
+          }
+
+          gib() {
+            awk -v bytes="$1" 'BEGIN { printf "%.3f", bytes / 1073741824 }'
+          }
+
+          vendor="$(cat /sys/class/dmi/id/sys_vendor)"
+          cpus="$(nproc)"
+          root_source="$(findmnt --noheadings --output SOURCE /)"
+          root_device="$(readlink -f "$root_source")"
+
+          printf 'Cloud vendor: %s\nCPUs: %s\nRoot device: %s\n' \
+            "$vendor" "$cpus" "$root_device"
+          lsblk --bytes --output NAME,PATH,TYPE,SIZE,FSTYPE,MOUNTPOINTS,MODEL
+          df -h / "$GITHUB_WORKSPACE"
+
+          [[ "$vendor" == "Amazon EC2" ]] || fail "Expected AWS; cloud vendor is '$vendor'."
+          [[ "$cpus" == "2" ]] || fail "Expected 2 CPUs; found '$cpus'."
+
+          imds_token="$(curl --fail --silent --show-error --noproxy '*' \
+            --connect-timeout 2 --max-time 5 --request PUT \
+            --header 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+            http://169.254.169.254/latest/api/token)"
+
+          metadata() {
+            curl --fail --silent --show-error --noproxy '*' \
+              --connect-timeout 2 --max-time 5 \
+              --header "X-aws-ec2-metadata-token: $imds_token" \
+              "http://169.254.169.254/latest/meta-data/$1"
+          }
+
+          instance_id="$(metadata instance-id)"
+          instance_type="$(metadata instance-type)"
+          ami_id="$(metadata ami-id)"
+          [[ -n "$instance_id" && -n "$instance_type" ]] || fail "AWS instance metadata is incomplete."
+          printf 'Instance ID: %s\nInstance type: %s\n' "$instance_id" "$instance_type"
+          printf 'AMI: %s\n' "$ami_id"
+          case " $EXPECTED_AMIS " in
+            *" $ami_id "*) ;;
+            *) fail "Worker AMI '$ami_id' is not one of the regional test AMIs." ;;
+          esac
+
+          devices="$(lsblk --json --bytes --nodeps --paths --output NAME,TYPE,SIZE,MODEL)"
+          ebs_disks="$(jq -ce '
+            [.blockdevices[] |
+              select(.type == "disk" and
+                ((.model // "" | gsub("^ +| +$"; "")) == "Amazon Elastic Block Store"))]
+          ' <<< "$devices")"
+          ebs_count="$(jq -r 'length' <<< "$ebs_disks")"
+          [[ "$ebs_count" == "1" ]] || fail "Expected one identifiable root EBS disk; found '$ebs_count'."
+
+          ebs_device="$(jq -er '.[0].name | select(type == "string" and startswith("/dev/"))' <<< "$ebs_disks")"
+          ebs_bytes="$(jq -er '.[0].size | select(type == "number" and . > 0)' <<< "$ebs_disks")"
+          ancestors="$(lsblk --inverse --paths --raw --noheadings --output NAME "$root_device")"
+          grep -Fxq -- "$ebs_device" <<< "$ancestors" ||
+            fail "The EBS disk '$ebs_device' is not an ancestor of the mounted root device."
+
+          root_bytes="$(df -B1 --output=size / | awk 'NR == 2 { print $1 }')"
+          workspace_bytes="$(df -B1 --output=size "$GITHUB_WORKSPACE" | awk 'NR == 2 { print $1 }')"
+          [[ "$root_bytes" =~ ^[0-9]+$ && "$workspace_bytes" =~ ^[0-9]+$ ]] ||
+            fail "Could not read mounted root/workspace filesystem capacity."
+
+          expected_ebs_bytes=$((EXPECTED_EBS_GIB * 1024 * 1024 * 1024))
+          minimum_filesystem_bytes=$((MIN_FILESYSTEM_GIB * 1024 * 1024 * 1024))
+
+          {
+            printf '# AWS two-core root disk validation\n\n'
+            printf '| Measurement | Observed | Required |\n|---|---|---|\n'
+            printf '| Cloud | %s | Amazon EC2 |\n' "$vendor"
+            printf '| CPUs | %s | 2 |\n' "$cpus"
+            printf '| Instance | %s (%s) | AWS |\n' "$instance_id" "$instance_type"
+            printf '| Root device | %s | Backed by %s |\n' "$root_device" "$ebs_device"
+            printf '| EBS disk | %s GiB | %s GiB |\n' "$(gib "$ebs_bytes")" "$EXPECTED_EBS_GIB"
+            printf '| Mounted root filesystem | %s GiB | At least %s GiB |\n' "$(gib "$root_bytes")" "$MIN_FILESYSTEM_GIB"
+            printf '| Workspace filesystem | %s GiB | At least %s GiB |\n' "$(gib "$workspace_bytes")" "$MIN_FILESYSTEM_GIB"
+            printf '\nFilesystem thresholds allow overhead; EBS capacity must remain exactly 75 GiB.\n'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          [[ "$ebs_bytes" -eq "$expected_ebs_bytes" ]] ||
+            fail "Expected a ${EXPECTED_EBS_GIB} GiB EBS root disk; observed $(gib "$ebs_bytes") GiB."
+          [[ "$root_bytes" -ge "$minimum_filesystem_bytes" ]] ||
+            fail "Mounted root filesystem is below ${MIN_FILESYSTEM_GIB} GiB."
+          [[ "$workspace_bytes" -ge "$minimum_filesystem_bytes" ]] ||
+            fail "Workspace filesystem is below ${MIN_FILESYSTEM_GIB} GiB."
+
+          printf '\nResult: PASS\n' | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Inspect first-boot disk expansion
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cloud-init --version
+          if cloud-init status --long; then
+            :
+          else
+            printf '::warning::cloud-init status exited %s\n' "$?"
+          fi
+
+          if sudo test -e /etc/growroot-disabled; then
+            echo "growroot-disabled marker EXISTS"
+          else
+            echo "No growroot-disabled marker"
+          fi
+
+          echo "=== Relevant image configuration ==="
+          sudo /usr/bin/python3 - <<'PY'
+          import pathlib
+          import yaml
+
+          paths = [pathlib.Path("/etc/cloud/cloud.cfg")]
+          paths += sorted(pathlib.Path("/etc/cloud/cloud.cfg.d").glob("*.cfg"))
+          keys = ("growpart", "resize_rootfs", "cloud_init_modules")
+          for path in paths:
+              config = yaml.safe_load(path.read_text()) or {}
+              selected = {key: config[key] for key in keys if key in config}
+              if selected:
+                  print(f"--- {path}")
+                  print(yaml.safe_dump(selected, sort_keys=False))
+          PY
+
+          echo "=== Cloud-init resize messages ==="
+          sudo awk '
+            tolower($0) ~ /growpart|growroot|resizefs|resize2fs|mapped device|device_part_info/ {
+              print NR ":" $0
+              found = 1
+            }
+            END {
+              if (!found) print "No matching resize messages found"
+            }
+          ' /var/log/cloud-init.log
+
+          echo "=== Early-boot COW/growth messages ==="
+          sudo journalctl -b -k --no-pager | awk '
+            tolower($0) ~ /setup-dm-snapshot|growroot/ {
+              print
+              found = 1
+            }
+            END {
+              if (!found) print "No matching early-boot messages found"
+            }
+          '
+      - name: Inspect COW boot setup and require active snapshot root
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kernel="$(uname -r)"
+          root_source="$(findmnt --noheadings --output SOURCE /)"
+          root_device="$(readlink -f "$root_source")"
+          echo "=== Running kernel and mounted root ==="
+          printf 'Kernel: %s\nRoot source: %s\nRoot device: %s\n' \
+            "$kernel" "$root_source" "$root_device"
+          lsblk --bytes --output NAME,PATH,TYPE,SIZE,FSTYPE,MOUNTPOINTS,MODEL
+
+          echo "=== Installed snapshot setup ==="
+          for file in \
+            /etc/initramfs-tools/scripts/local-top/setup-dm-snapshot \
+            /etc/initramfs-tools/hooks/setup-dm-snapshot-hook; do
+            if sudo test -f "$file"; then
+              sudo stat --format='%n mode=%a size=%s' "$file"
+              sudo sha256sum "$file"
+              sudo awk '
+                /PREREQ=|growpart|ROOT=|copy_exec|return 1|exit 0|log "/ {
+                  print NR ":" $0
+                }
+              ' "$file"
+            else
+              printf '::warning::Missing installed boot file: %s\n' "$file"
+            fi
+          done
+
+          echo "=== Running kernel initramfs contents ==="
+          initrd="/boot/initrd.img-$kernel"
+          if sudo test -f "$initrd"; then
+            sudo lsinitramfs "$initrd" | awk '
+              /setup-dm-snapshot|growpart|sfdisk|partx|dmsetup|dm-snapshot|dm_snapshot/ {
+                print
+                found = 1
+              }
+              END {
+                if (!found) print "No matching snapshot/growth components found"
+              }
+            '
+          else
+            printf '::warning::Running kernel initramfs is absent at %s\n' "$initrd"
+          fi
+
+          echo "=== COW-related services ==="
+          systemctl list-unit-files --no-pager --no-legend | awk '
+            tolower($1) ~ /cow|snapshot|growpart/ { print }
+          '
+
+          echo "=== Kernel snapshot diagnostics ==="
+          sudo dmesg | awk '
+            tolower($0) ~ /setup-dm-snapshot|device-mapper|dm-snapshot|growroot/ {
+              print
+            }
+          '
+
+          echo "=== Active snapshot mappings ==="
+          snapshot_table="$(sudo dmsetup table --target snapshot)"
+          printf '%s\n' "$snapshot_table"
+          printf '\n## COW root validation\n\nRoot source: `%s`\n\n' \
+            "$root_source" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$root_device" != "$(readlink -f /dev/mapper/cow-root)" ]] ||
+             ! awk '$1 == "cow-root:" && $4 == "snapshot" { found = 1 } END { exit !found }' \
+               <<< "$snapshot_table"; then
+            echo 'Result: FAIL - root is not the active cow-root snapshot.' >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Root is not mounted through an active cow-root snapshot; disk capacity alone is not sufficient."
+            exit 1
+          fi
+          echo 'Result: PASS - root is mounted through the cow-root snapshot.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Identify initramfs generator and inspect image packaging
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== Installed initramfs packages ==="
+          for package in dracut dracut-core dracut-install dracut-initramfs \
+            initramfs-tools initramfs-tools-core; do
+            if package_info="$(dpkg-query -W -f='${binary:Package} ${db:Status-Abbrev} ${Version}\n' "$package" 2>&1)"; then
+              printf '%s\n' "$package_info"
+            else
+              printf 'Package query for %s: %s\n' "$package" "$package_info"
+            fi
+          done
+
+          echo "=== Generator and inspection tools ==="
+          for tool in update-initramfs mkinitramfs dracut lsinitrd lsinitramfs; do
+            if tool_path="$(command -v "$tool")"; then
+              printf '%s: %s -> %s\n' "$tool" "$tool_path" "$(readlink -f "$tool_path")"
+              if ! dpkg-query -S "$tool_path"; then
+                printf '::warning::Could not identify the package owning %s\n' "$tool_path"
+              fi
+            else
+              printf '%s: unavailable\n' "$tool"
+            fi
+          done
+
+          echo "=== Running kernel initramfs identity ==="
+          initrd="/boot/initrd.img-$(uname -r)"
+          sudo stat "$initrd"
+          sudo file "$initrd"
+          sudo sha256sum "$initrd"
+
+          echo "=== Dracut inspection, if available ==="
+          if command -v lsinitrd >/dev/null 2>&1; then
+            if modules="$(sudo lsinitrd -m "$initrd" 2>&1)"; then
+              printf '%s\n' "$modules"
+            else
+              printf '::warning::lsinitrd module inspection failed\n%s\n' "$modules"
+            fi
+            if listing="$(sudo lsinitrd "$initrd" 2>&1)"; then
+              printf '%s\n' "$listing" | awk '
+                /setup-dm-snapshot|growpart|sfdisk|partx|dmsetup|dm-snapshot|dm_snapshot|dracut/ {
+                  print
+                  found = 1
+                }
+                END {
+                  if (!found) print "No matching COW/growth/Dracut components found"
+                }
+              '
+            else
+              printf '::warning::lsinitrd contents inspection failed\n%s\n' "$listing"
+            fi
+          else
+            echo "lsinitrd is unavailable; see the initramfs-tools inspection in the preceding step."
+          fi
+
+          echo "=== Snapshot configuration service state and ordering ==="
+          systemctl show configure-dm-snapshot-growpart.service \
+            --property=LoadState,ActiveState,SubState,Result,ExecMainStatus,Before,After
+          sudo journalctl -b -u configure-dm-snapshot-growpart.service --no-pager
+
+          echo "=== update-initramfs implementation ==="
+          if update_path="$(command -v update-initramfs)"; then
+            sudo head -n 100 "$update_path"
+          else
+            echo "update-initramfs is unavailable."
+          fi
