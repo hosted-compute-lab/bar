@@ -12,6 +12,7 @@ jobs:
     env:
       EXPECTED_EBS_GIB: "150"
       MIN_FILESYSTEM_GIB: "140"
+      EXPECTED_AMIS: "ami-02a3ef1fdab5d1a99 ami-065f050ee2cad6b12 ami-0f9df3a1fb8dcce55"
     steps:
       - name: Validate AWS placement and usable root disk capacity
         shell: bash
@@ -54,8 +55,14 @@ jobs:
 
           instance_id="$(metadata instance-id)"
           instance_type="$(metadata instance-type)"
+          ami_id="$(metadata ami-id)"
           [[ -n "$instance_id" && -n "$instance_type" ]] || fail "AWS instance metadata is incomplete."
           printf 'Instance ID: %s\nInstance type: %s\n' "$instance_id" "$instance_type"
+          printf 'AMI: %s\n' "$ami_id"
+          case " $EXPECTED_AMIS " in
+            *" $ami_id "*) ;;
+            *) fail "Worker AMI '$ami_id' is not one of the regional test AMIs." ;;
+          esac
 
           devices="$(lsblk --json --bytes --nodeps --paths --output NAME,TYPE,SIZE,MODEL)"
           ebs_disks="$(jq -ce '
@@ -157,3 +164,75 @@ jobs:
               if (!found) print "No matching early-boot messages found"
             }
           '
+      - name: Inspect COW boot setup and require active snapshot root
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kernel="$(uname -r)"
+          root_source="$(findmnt --noheadings --output SOURCE /)"
+          root_device="$(readlink -f "$root_source")"
+          echo "=== Running kernel and mounted root ==="
+          printf 'Kernel: %s\nRoot source: %s\nRoot device: %s\n' \
+            "$kernel" "$root_source" "$root_device"
+          lsblk --bytes --output NAME,PATH,TYPE,SIZE,FSTYPE,MOUNTPOINTS,MODEL
+
+          echo "=== Installed snapshot setup ==="
+          for file in \
+            /etc/initramfs-tools/scripts/local-top/setup-dm-snapshot \
+            /etc/initramfs-tools/hooks/setup-dm-snapshot-hook; do
+            if sudo test -f "$file"; then
+              sudo stat --format='%n mode=%a size=%s' "$file"
+              sudo sha256sum "$file"
+              sudo awk '
+                /PREREQ=|growpart|ROOT=|copy_exec|return 1|exit 0|log "/ {
+                  print NR ":" $0
+                }
+              ' "$file"
+            else
+              printf '::warning::Missing installed boot file: %s\n' "$file"
+            fi
+          done
+
+          echo "=== Running kernel initramfs contents ==="
+          initrd="/boot/initrd.img-$kernel"
+          if sudo test -f "$initrd"; then
+            sudo lsinitramfs "$initrd" | awk '
+              /setup-dm-snapshot|growpart|sfdisk|partx|dmsetup|dm-snapshot|dm_snapshot/ {
+                print
+                found = 1
+              }
+              END {
+                if (!found) print "No matching snapshot/growth components found"
+              }
+            '
+          else
+            printf '::warning::Running kernel initramfs is absent at %s\n' "$initrd"
+          fi
+
+          echo "=== COW-related services ==="
+          systemctl list-unit-files --no-pager --no-legend | awk '
+            tolower($1) ~ /cow|snapshot|growpart/ { print }
+          '
+
+          echo "=== Kernel snapshot diagnostics ==="
+          sudo dmesg | awk '
+            tolower($0) ~ /setup-dm-snapshot|device-mapper|dm-snapshot|growroot/ {
+              print
+            }
+          '
+
+          echo "=== Active snapshot mappings ==="
+          snapshot_table="$(sudo dmsetup table --target snapshot)"
+          printf '%s\n' "$snapshot_table"
+          printf '\n## COW root validation\n\nRoot source: `%s`\n\n' \
+            "$root_source" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$root_device" != "$(readlink -f /dev/mapper/cow-root)" ]] ||
+             ! awk '$1 == "cow-root:" && $4 == "snapshot" { found = 1 } END { exit !found }' \
+               <<< "$snapshot_table"; then
+            echo 'Result: FAIL - root is not the active cow-root snapshot.' >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Root is not mounted through an active cow-root snapshot; disk capacity alone is not sufficient."
+            exit 1
+          fi
+          echo 'Result: PASS - root is mounted through the cow-root snapshot.' >> "$GITHUB_STEP_SUMMARY"
