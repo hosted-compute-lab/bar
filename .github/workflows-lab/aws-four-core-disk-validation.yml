@@ -236,3 +236,72 @@ jobs:
             exit 1
           fi
           echo 'Result: PASS - root is mounted through the cow-root snapshot.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Identify initramfs generator and inspect image packaging
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== Installed initramfs packages ==="
+          for package in dracut dracut-core dracut-install dracut-initramfs \
+            initramfs-tools initramfs-tools-core; do
+            if package_info="$(dpkg-query -W -f='${binary:Package} ${db:Status-Abbrev} ${Version}\n' "$package" 2>&1)"; then
+              printf '%s\n' "$package_info"
+            else
+              printf 'Package query for %s: %s\n' "$package" "$package_info"
+            fi
+          done
+
+          echo "=== Generator and inspection tools ==="
+          for tool in update-initramfs mkinitramfs dracut lsinitrd lsinitramfs; do
+            if tool_path="$(command -v "$tool")"; then
+              printf '%s: %s -> %s\n' "$tool" "$tool_path" "$(readlink -f "$tool_path")"
+              if ! dpkg-query -S "$tool_path"; then
+                printf '::warning::Could not identify the package owning %s\n' "$tool_path"
+              fi
+            else
+              printf '%s: unavailable\n' "$tool"
+            fi
+          done
+
+          echo "=== Running kernel initramfs identity ==="
+          initrd="/boot/initrd.img-$(uname -r)"
+          sudo stat "$initrd"
+          sudo file "$initrd"
+          sudo sha256sum "$initrd"
+
+          echo "=== Dracut inspection, if available ==="
+          if command -v lsinitrd >/dev/null 2>&1; then
+            if modules="$(sudo lsinitrd -m "$initrd" 2>&1)"; then
+              printf '%s\n' "$modules"
+            else
+              printf '::warning::lsinitrd module inspection failed\n%s\n' "$modules"
+            fi
+            if listing="$(sudo lsinitrd "$initrd" 2>&1)"; then
+              printf '%s\n' "$listing" | awk '
+                /setup-dm-snapshot|growpart|sfdisk|partx|dmsetup|dm-snapshot|dm_snapshot|dracut/ {
+                  print
+                  found = 1
+                }
+                END {
+                  if (!found) print "No matching COW/growth/Dracut components found"
+                }
+              '
+            else
+              printf '::warning::lsinitrd contents inspection failed\n%s\n' "$listing"
+            fi
+          else
+            echo "lsinitrd is unavailable; see the initramfs-tools inspection in the preceding step."
+          fi
+
+          echo "=== Snapshot configuration service state and ordering ==="
+          systemctl show configure-dm-snapshot-growpart.service \
+            --property=LoadState,ActiveState,SubState,Result,ExecMainStatus,Before,After
+          sudo journalctl -b -u configure-dm-snapshot-growpart.service --no-pager
+
+          echo "=== update-initramfs implementation ==="
+          if update_path="$(command -v update-initramfs)"; then
+            sudo head -n 100 "$update_path"
+          else
+            echo "update-initramfs is unavailable."
+          fi
