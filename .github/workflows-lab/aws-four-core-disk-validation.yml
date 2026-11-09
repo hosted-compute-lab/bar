@@ -7,12 +7,12 @@ permissions: {}
 
 jobs:
   validate:
-    runs-on: ubuntu-26.04-aws-2core
+    runs-on: ubuntu-26.04-aws
     timeout-minutes: 5
     env:
       EXPECTED_EBS_GIB: "150"
       MIN_FILESYSTEM_GIB: "140"
-      EXPECTED_AMIS: "ami-02a3ef1fdab5d1a99 ami-065f050ee2cad6b12 ami-0f9df3a1fb8dcce55"
+      EXPECTED_AMIS: "ami-03bfd61cf945a6551"
     steps:
       - name: Validate AWS placement and usable root disk capacity
         shell: bash
