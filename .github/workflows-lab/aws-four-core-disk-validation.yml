@@ -12,7 +12,7 @@ jobs:
     env:
       EXPECTED_EBS_GIB: "150"
       MIN_FILESYSTEM_GIB: "140"
-      EXPECTED_AMIS: "ami-03bfd61cf945a6551"
+      EXPECTED_AMIS: "ami-0c5607c267f65a23a ami-0030c5682378935eb ami-012b92b2041eae2d9"
     steps:
       - name: Validate AWS placement and usable root disk capacity
         shell: bash
@@ -236,6 +236,69 @@ jobs:
             exit 1
           fi
           echo 'Result: PASS - root is mounted through the cow-root snapshot.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Validate root fsck handoff to COW
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          fail() {
+            printf '::error::%s\n' "$*" >&2
+            exit 1
+          }
+
+          root_device="$(readlink -f "$(findmnt --noheadings --output SOURCE /)")"
+          [[ "$root_device" == "$(readlink -f /dev/mapper/cow-root)" ]] ||
+            fail "Root must be mounted through cow-root before validating its fsck handoff."
+
+          unit="systemd-fsck-root.service"
+          echo "=== Effective root fsck service after switch-root ==="
+          properties="$(systemctl show "$unit" \
+            --property=LoadState,ExecStart,DropInPaths,ActiveState,Result,ExecMainStatus)"
+          printf '%s\n' "$properties"
+          [[ "$(sed -n 's/^LoadState=//p' <<< "$properties")" == "loaded" ]] ||
+            fail "$unit is not loaded."
+
+          command="$(sed -n 's/^ExecStart=//p' <<< "$properties")"
+          [[ "$command" == *"argv[]="* ]] ||
+            fail "Cannot read the effective root fsck command."
+          argv="${command#*argv[]=}"
+          argv="${argv%% ;*}"
+          read -r fsck_binary fsck_target extra <<< "$argv"
+          [[ "$fsck_target" == "/dev/mapper/cow-root" && -z "$extra" ]] ||
+            fail "$unit must check cow-root, not the physical origin: $command"
+          [[ "$fsck_binary" == /*/systemd-fsck && -x "$fsck_binary" ]] ||
+            fail "Root fsck executable is unavailable after switch-root: $fsck_binary"
+
+          [[ "$(sed -n 's/^ActiveState=//p' <<< "$properties")" != "failed" ]] ||
+            fail "$unit is in the failed state."
+          [[ "$(sed -n 's/^Result=//p' <<< "$properties")" == "success" ]] ||
+            fail "$unit did not report a successful result."
+          [[ "$(sed -n 's/^ExecMainStatus=//p' <<< "$properties")" == "0" ]] ||
+            fail "$unit recorded a nonzero process exit status."
+
+          echo "=== Root fsck journal for this boot ==="
+          journal="$(sudo journalctl -b -u "$unit" --no-pager --output=cat)"
+          printf '%s\n' "$journal"
+          if [[ -z "$journal" || "$journal" == "-- No entries --" ]]; then
+            echo "::warning::No root fsck journal entries; cannot confirm that fsck ran during boot."
+          fi
+          if grep -Eiq \
+            'fsck failed|Failed to (start|execute)|Failed at step EXEC|status=203/EXEC|Device or resource busy' \
+            <<< "$journal"; then
+            fail "The boot journal contains a root fsck failure."
+          fi
+
+          {
+            printf '\n## Root fsck handoff regression\n\n'
+            printf '| Check | Result |\n|---|---|\n'
+            printf '| Effective unit | `%s` |\n' "$unit"
+            printf '| Configured fsck target | `%s` |\n' "$fsck_target"
+            printf '| Executable available after switch-root | `%s` |\n' "$fsck_binary"
+            printf '| Recorded service result | success, exit status 0 |\n'
+            printf '\nPASS: the effective root fsck command targets COW and its executable exists on the real root.\n'
+            printf 'This is a read-only handoff check; it does not force fsck, repair a filesystem, or reboot the worker.\n'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Identify initramfs generator and inspect image packaging
         if: always()
         shell: bash
